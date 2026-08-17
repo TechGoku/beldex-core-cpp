@@ -266,6 +266,36 @@ string serial_bridge::generate_key_image(const string txPublicKey, const string 
 	return ret_json_from_root(root);
 }
 //
+// HF21: pull the private-token fields off an unspent-out description. All are
+// optional; a description without them is an ordinary BDX output, so old
+// servers and old callers keep working untouched.
+static void _parse_token_fields_onto(boost::property_tree::ptree &desc, SpendableOutput &out)
+{
+	out.token_id = desc.get_optional<string>("token_id");
+	out.blinded_token_id = desc.get_optional<string>("blinded_token_id");
+	out.amount_commitment = desc.get_optional<string>("amount_commitment");
+	boost::optional<string> enc = desc.get_optional<string>("encrypted_amount");
+	if (enc != none && !enc->empty()) {
+		out.encrypted_amount = stoull(*enc);
+	}
+	// Normalise empty strings to "absent" so is_zarcanum() cannot be tripped by
+	// a server that emits "" rather than omitting the key.
+	if (out.token_id != none && out.token_id->empty()) out.token_id = none;
+	if (out.blinded_token_id != none && out.blinded_token_id->empty()) out.blinded_token_id = none;
+	if (out.amount_commitment != none && out.amount_commitment->empty()) out.amount_commitment = none;
+}
+// Emit them again on the way back out, so a caller can hand step1's using_outs
+// straight to step2 without reassembling them.
+static void _put_token_fields(boost::property_tree::ptree &out_ptree, const SpendableOutput &out)
+{
+	if (out.token_id != none) out_ptree.put("token_id", *out.token_id);
+	if (out.blinded_token_id != none) out_ptree.put("blinded_token_id", *out.blinded_token_id);
+	if (out.amount_commitment != none) out_ptree.put("amount_commitment", *out.amount_commitment);
+	if (out.encrypted_amount != none) {
+		out_ptree.put("encrypted_amount", RetVals_Transforms::str_from(*out.encrypted_amount));
+	}
+}
+//
 string serial_bridge::send_step1__prepare_params_for_get_decoys(const string &args_string)
 { // TODO: possibly allow this fn to take tx sec key as an arg, although, random bit gen is now handled well by emscripten
 	boost::property_tree::ptree json_root;
@@ -288,6 +318,7 @@ string serial_bridge::send_step1__prepare_params_for_get_decoys(const string &ar
 		out.global_index = stoull(output_desc.second.get<string>("global_index"));
 		out.index = stoull(output_desc.second.get<string>("index"));
 		out.tx_pub_key = output_desc.second.get<string>("tx_pub_key");
+		_parse_token_fields_onto(output_desc.second, out);
 		//
 		unspent_outs.push_back(std::move(out));
 	}
@@ -312,6 +343,7 @@ string serial_bridge::send_step1__prepare_params_for_get_decoys(const string &ar
 				amountOutput.global_index = stoull(mix_out_output_desc.second.get<string>("global_index"));
 				amountOutput.public_key = mix_out_output_desc.second.get<string>("public_key");
 				amountOutput.rct = mix_out_output_desc.second.get_optional<string>("rct");
+			amountOutput.blinded_token_id = mix_out_output_desc.second.get_optional<string>("blinded_token_id"); // HF21
 				amountAndOuts.outputs.push_back(std::move(amountOutput));
 			}
 			prior_attempt_unspent_outs_to_mix_outs[out_pub_key] = std::move(amountAndOuts.outputs);
@@ -338,7 +370,9 @@ string serial_bridge::send_step1__prepare_params_for_get_decoys(const string &ar
 		stoull(json_root.get<string>("fee_mask")),
 		//
 		optl__prior_attempt_size_calcd_fee, // use this for passing step2 "must-reconstruct" return values back in, i.e. re-entry; when nil, defaults to attempt at network min
-		optl__prior_attempt_unspent_outs_to_mix_outs // on re-entry, re-use the same outs and requested decoys, in order to land on the correct calculated fee
+		optl__prior_attempt_unspent_outs_to_mix_outs, // on re-entry, re-use the same outs and requested decoys, in order to land on the correct calculated fee
+		json_root.get_optional<string>("token_id"), // HF21: send this token instead of BDX
+		fork_version
 	);
 	boost::property_tree::ptree root;
 	if (retVals.errCode != noError) {
@@ -348,11 +382,18 @@ string serial_bridge::send_step1__prepare_params_for_get_decoys(const string &ar
 		// The following will be set if errCode==needMoreMoneyThanFound - and i'm depending on them being 0 otherwise
 		root.put("spendable_balance", RetVals_Transforms::str_from(retVals.spendable_balance));
 		root.put("required_balance", RetVals_Transforms::str_from(retVals.required_balance));
+		// HF21: on a token send these say whether it was the token pool or the
+		// BDX pool (which pays the fee) that came up short.
+		root.put("token_spendable_balance", RetVals_Transforms::str_from(retVals.token_spendable_balance));
+		root.put("token_required_balance", RetVals_Transforms::str_from(retVals.token_required_balance));
 	} else {
 		root.put("mixin", RetVals_Transforms::str_from(retVals.mixin));
 		root.put("using_fee", RetVals_Transforms::str_from(retVals.using_fee));
 		root.put("final_total_wo_fee", RetVals_Transforms::str_from(retVals.final_total_wo_fee));
 		root.put("change_amount", RetVals_Transforms::str_from(retVals.change_amount));
+		// HF21: the token side of a private-token send. Zero for a BDX send.
+		root.put("token_final_total_wo_fee", RetVals_Transforms::str_from(retVals.token_final_total_wo_fee));
+		root.put("token_change_amount", RetVals_Transforms::str_from(retVals.token_change_amount));
 		{
 			boost::property_tree::ptree using_outs_ptree;
 			BOOST_FOREACH(SpendableOutput &out, retVals.using_outs)
@@ -367,6 +408,7 @@ string serial_bridge::send_step1__prepare_params_for_get_decoys(const string &ar
 				out_ptree.put("global_index", RetVals_Transforms::str_from(out.global_index));
 				out_ptree.put("index", RetVals_Transforms::str_from(out.index));
 				out_ptree.put("tx_pub_key", out.tx_pub_key);
+				_put_token_fields(out_ptree, out);
 				using_outs_ptree.push_back(out_ptree_pair);
 			}
 			root.add_child("using_outs", using_outs_ptree);
@@ -397,6 +439,7 @@ string serial_bridge::pre_step2_tie_unspent_outs_to_mix_outs_for_all_future_tx_a
 		out.global_index = stoull(output_desc.second.get<string>("global_index"));
 		out.index = stoull(output_desc.second.get<string>("index"));
 		out.tx_pub_key = output_desc.second.get<string>("tx_pub_key");
+		_parse_token_fields_onto(output_desc.second, out);
 		//
 		using_outs.push_back(std::move(out));
 	}
@@ -414,6 +457,8 @@ string serial_bridge::pre_step2_tie_unspent_outs_to_mix_outs_for_all_future_tx_a
 			amountOutput.global_index = stoull(mix_out_output_desc.second.get<string>("global_index"));
 			amountOutput.public_key = mix_out_output_desc.second.get<string>("public_key");
 			amountOutput.rct = mix_out_output_desc.second.get_optional<string>("rct");
+			// HF21: present when the decoy is itself a tx_out_zarcanum.
+			amountOutput.blinded_token_id = mix_out_output_desc.second.get_optional<string>("blinded_token_id");
 			amountAndOuts.outputs.push_back(std::move(amountOutput));
 		}
 		mix_outs_from_server.push_back(std::move(amountAndOuts));
@@ -435,6 +480,7 @@ string serial_bridge::pre_step2_tie_unspent_outs_to_mix_outs_for_all_future_tx_a
 				amountOutput.global_index = stoull(mix_out_output_desc.second.get<string>("global_index"));
 				amountOutput.public_key = mix_out_output_desc.second.get<string>("public_key");
 				amountOutput.rct = mix_out_output_desc.second.get_optional<string>("rct");
+			amountOutput.blinded_token_id = mix_out_output_desc.second.get_optional<string>("blinded_token_id"); // HF21
 				amountAndOuts.outputs.push_back(std::move(amountOutput));
 			}
 			prior_attempt_unspent_outs_to_mix_outs[out_pub_key] = std::move(amountAndOuts.outputs);
@@ -474,6 +520,9 @@ string serial_bridge::pre_step2_tie_unspent_outs_to_mix_outs_for_all_future_tx_a
 					if (out.rct != none && (*out.rct).empty() == false) {
 						mix_out_ptree.put("rct", *out.rct);
 					}
+					if (out.blinded_token_id != none && (out.blinded_token_id)->empty() == false) {
+						mix_out_ptree.put("blinded_token_id", *out.blinded_token_id); // HF21
+					}
 					outputs_ptree.push_back(mix_out_ptree_pair);
 				}
 				mix_outs_amount_ptree.add_child("outputs", outputs_ptree);
@@ -496,6 +545,9 @@ string serial_bridge::pre_step2_tie_unspent_outs_to_mix_outs_for_all_future_tx_a
 					mix_out_ptree.put("public_key", mix_out.public_key);
 					if (mix_out.rct != none && (*mix_out.rct).empty() == false) {
 						mix_out_ptree.put("rct", *mix_out.rct);
+					}
+					if (mix_out.blinded_token_id != none && (mix_out.blinded_token_id)->empty() == false) {
+						mix_out_ptree.put("blinded_token_id", *mix_out.blinded_token_id); // HF21
 					}
 					outs_ptree.push_back(mix_out_ptree_pair);
 				}
@@ -545,6 +597,7 @@ string serial_bridge::send_step2__try_create_transaction(const string &args_stri
 			amountOutput.global_index = stoull(mix_out_output_desc.second.get<string>("global_index")); // this is, I believe, presently supplied as a string by the API, probably to avoid overflow
 			amountOutput.public_key = mix_out_output_desc.second.get<string>("public_key");
 			amountOutput.rct = mix_out_output_desc.second.get_optional<string>("rct");
+			amountOutput.blinded_token_id = mix_out_output_desc.second.get_optional<string>("blinded_token_id"); // HF21
 			amountAndOuts.outputs.push_back(std::move(amountOutput));
 		}
 		mix_outs.push_back(std::move(amountAndOuts));
@@ -553,6 +606,17 @@ string serial_bridge::send_step2__try_create_transaction(const string &args_stri
 	boost::optional<string> optl__fork_version_string = json_root.get_optional<string>("fork_version");
 	if (optl__fork_version_string != none) {
 		fork_version = stoul(*optl__fork_version_string);
+	}
+	boost::optional<string> optl__token_id = json_root.get_optional<string>("token_id");
+	if (optl__token_id != none && optl__token_id->empty()) {
+		optl__token_id = none;
+	}
+	uint64_t optl__token_change_amount = 0;
+	{
+		boost::optional<string> tca = json_root.get_optional<string>("token_change_amount");
+		if (tca != none && !tca->empty()) {
+			optl__token_change_amount = stoull(*tca);
+		}
 	}
 	Send_Step2_RetVals retVals;
 	boost::optional<master_node_data> mn_data = boost::none;
@@ -576,7 +640,14 @@ string serial_bridge::send_step2__try_create_transaction(const string &args_stri
 		mix_outs,
 		beldex_fork_rules::make_use_fork_rules_fn(fork_version),
 		stoull(json_root.get<string>("unlock_time")),
-		nettype_from_string(json_root.get<string>("nettype_string"))
+		nettype_from_string(json_root.get<string>("nettype_string")),
+		// HF21: "token_id" marks the single destination as a private-token
+		// output; absent means an ordinary BDX transfer, exactly as before.
+		optl__token_id != none
+			? vector<boost::optional<string>>{optl__token_id}
+			: vector<boost::optional<string>>{},
+		optl__token_change_amount,
+		fork_version
 	);
 	boost::property_tree::ptree root;
 	if (retVals.errCode != noError) {

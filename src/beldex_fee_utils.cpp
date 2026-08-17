@@ -155,7 +155,53 @@ int beldex_fee_utils::get_fee_algorithm(use_fork_rules_fn_type use_fork_rules_fn
 		return 1;
 	return 0;
 }
-size_t beldex_fee_utils::estimate_rct_tx_size(int n_inputs, int mixin, int n_outputs, size_t extra_size, bool bulletproof, bool clsag)
+// HF21: bytes added by the private-token parts of a transaction, none of which
+// the classic RingCT model above accounts for.
+size_t beldex_fee_utils::estimate_zc_extra_size(int n_zc_outputs, int n_zc_inputs, int mixin)
+{
+	if (n_zc_outputs <= 0 && n_zc_inputs <= 0) {
+		return 0;
+	}
+	size_t size = 0;
+	const int ring_size = mixin + 1;
+	//
+	// tx_out_zarcanum is larger than txout_to_key: stealth_address +
+	// amount_commitment + blinded_token_id (3*32) + varint encrypted_amount
+	// (<=9) + mix_attr + version, against the 32 the base model already
+	// charged for the output key.
+	size += (size_t)n_zc_outputs * ((3 * 32 + 9 + 1 + 1) - 32);
+	//
+	// One BGE surjection proof per token output. Size is O(log4(ring)) group
+	// elements: A, B, y, z (4*32) plus m Pk points and m*(n-1) f scalars, with
+	// n = 4 and m = ceil(log4(ring)).
+	size_t m = 1;
+	while ((size_t)(1 << (2 * m)) < (size_t)ring_size) {
+		++m;
+	}
+	size += (size_t)n_zc_outputs * (4 * 32 + m * 32 + m * 3 * 32);
+	//
+	if (n_zc_outputs > 0) {
+		// Outputs range proof: a Bulletproof+ over the auxiliary commitments,
+		// plus the vector-HG aggregation proof that binds them to the real ones
+		// (one aux commitment and two response scalars per output, one shared
+		// challenge).
+		size_t log_padded = 0;
+		while ((1 << log_padded) < n_zc_outputs) {
+			++log_padded;
+		}
+		size += (2 * (6 + log_padded) + 4 + 5) * 32 + 3;
+		size += (size_t)n_zc_outputs * 3 * 32 + 32;
+		// Balance proof: P + a double Schnorr (3 scalars).
+		size += 4 * 32;
+	}
+	//
+	// ZC_sig per token input: CLSAG-GGX carries s_g and s_x (one scalar each
+	// per ring member) plus c1, D, E, and the two pseudo-out points.
+	size += (size_t)n_zc_inputs * (2 * 32 * ring_size + 5 * 32);
+	//
+	return size;
+}
+size_t beldex_fee_utils::estimate_rct_tx_size(int n_inputs, int mixin, int n_outputs, size_t extra_size, bool bulletproof, bool clsag, int n_zc_outputs, int n_zc_inputs)
 {
 	size_t size = 0;
 	
@@ -207,20 +253,23 @@ size_t beldex_fee_utils::estimate_rct_tx_size(int n_inputs, int mixin, int n_out
 	// txnFee
 	size += 4;
 	
+	// HF21 private-token parts
+	size += estimate_zc_extra_size(n_zc_outputs, n_zc_inputs, mixin);
+	
 	LOG_PRINT_L2("estimated " << (bulletproof ? "bulletproof" : "borromean") << " rct tx size for " << n_inputs << " inputs with ring size " << (mixin+1) << " and " << n_outputs << " outputs: " << size << " (" << ((32 * n_inputs/*+1*/) + 2 * 32 * (mixin+1) * n_inputs + 32 * n_outputs) << " saved)");
 	return size;
 }
-size_t beldex_fee_utils::estimate_tx_size(bool use_rct, int n_inputs, int mixin, int n_outputs, size_t extra_size, bool bulletproof, bool clsag)
+size_t beldex_fee_utils::estimate_tx_size(bool use_rct, int n_inputs, int mixin, int n_outputs, size_t extra_size, bool bulletproof, bool clsag, int n_zc_outputs, int n_zc_inputs)
 {
 	if (use_rct)
-		return estimate_rct_tx_size(n_inputs, mixin, n_outputs, extra_size, bulletproof, clsag);
+		return estimate_rct_tx_size(n_inputs, mixin, n_outputs, extra_size, bulletproof, clsag, n_zc_outputs, n_zc_inputs);
 	else
 		return n_inputs * (mixin+1) * APPROXIMATE_INPUT_BYTES + extra_size;
 }
 
-uint64_t beldex_fee_utils::estimate_tx_weight(bool use_rct, int n_inputs, int mixin, int n_outputs, size_t extra_size, bool bulletproof, bool clsag)
+uint64_t beldex_fee_utils::estimate_tx_weight(bool use_rct, int n_inputs, int mixin, int n_outputs, size_t extra_size, bool bulletproof, bool clsag, int n_zc_outputs, int n_zc_inputs)
 {
-	size_t size = estimate_tx_size(use_rct, n_inputs, mixin, n_outputs, extra_size, bulletproof, clsag);
+	size_t size = estimate_tx_size(use_rct, n_inputs, mixin, n_outputs, extra_size, bulletproof, clsag, n_zc_outputs, n_zc_inputs);
 	if (use_rct && bulletproof && n_outputs > 2)
 	{
 		const uint64_t bp_base = 368;
@@ -235,16 +284,16 @@ uint64_t beldex_fee_utils::estimate_tx_weight(bool use_rct, int n_inputs, int mi
 	}
 	return size;
 }
-uint64_t beldex_fee_utils::estimate_fee(bool use_per_byte_fee, bool use_rct, int n_inputs, int mixin, int n_outputs, size_t extra_size, bool bulletproof, bool clsag, uint64_t fee_per_b,uint64_t fee_per_o, uint64_t fee_multiplier, uint64_t fee_quantization_mask)
+uint64_t beldex_fee_utils::estimate_fee(bool use_per_byte_fee, bool use_rct, int n_inputs, int mixin, int n_outputs, size_t extra_size, bool bulletproof, bool clsag, uint64_t fee_per_b,uint64_t fee_per_o, uint64_t fee_multiplier, uint64_t fee_quantization_mask, int n_zc_outputs, int n_zc_inputs)
 {
 	if (use_per_byte_fee)
 	{
-		const size_t estimated_tx_weight = estimate_tx_weight(use_rct, n_inputs, mixin, n_outputs, extra_size, bulletproof, clsag);
+		const size_t estimated_tx_weight = estimate_tx_weight(use_rct, n_inputs, mixin, n_outputs, extra_size, bulletproof, clsag, n_zc_outputs, n_zc_inputs);
 		return calculate_fee_from_weight(fee_per_b,fee_per_o, estimated_tx_weight,n_outputs, fee_multiplier, fee_quantization_mask);
 	}
 	else
 	{
-		const size_t estimated_tx_size = estimate_tx_size(use_rct, n_inputs, mixin, n_outputs, extra_size, bulletproof, clsag);
+		const size_t estimated_tx_size = estimate_tx_size(use_rct, n_inputs, mixin, n_outputs, extra_size, bulletproof, clsag, n_zc_outputs, n_zc_inputs);
 		return calculate_fee_from_size_1(fee_per_b, fee_per_o, estimated_tx_size, fee_multiplier);
 	}
 }

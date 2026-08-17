@@ -58,7 +58,15 @@ namespace beldex_fee_utils
 	int get_fee_algorithm(use_fork_rules_fn_type use_fork_rules_fn);
 	uint64_t get_base_fee(uint64_t fee_per_b);
 	//
-	uint64_t estimate_fee(bool use_per_byte_fee, bool use_rct, int n_inputs, int mixin, int n_outputs, size_t extra_size, bool bulletproof, bool clsag, uint64_t fee_per_b,uint64_t fee_per_o, uint64_t fee_multiplier, uint64_t fee_quantization_mask);
+	//! n_zc_outputs / n_zc_inputs (HF21+) describe the private-token part of the
+	//! transaction, which carries data the classic RingCT size model knows
+	//! nothing about: a fatter output record, one BGE surjection proof per token
+	//! output, a balance proof, an outputs range proof, and a 3-layer CLSAG-GGX
+	//! per token input. Leaving them at 0 reproduces the historical estimate
+	//! exactly, so every existing caller is unaffected.
+	uint64_t estimate_fee(bool use_per_byte_fee, bool use_rct, int n_inputs, int mixin, int n_outputs, size_t extra_size, bool bulletproof, bool clsag, uint64_t fee_per_b,uint64_t fee_per_o, uint64_t fee_multiplier, uint64_t fee_quantization_mask, int n_zc_outputs = 0, int n_zc_inputs = 0);
+	//! Extra bytes contributed by the private-token parts of a transaction.
+	size_t estimate_zc_extra_size(int n_zc_outputs, int n_zc_inputs, int mixin);
 	//
 	uint64_t calculate_fee_from_weight(uint64_t fee_per_b, uint64_t fee_per_o, uint64_t weight,int outputs, uint64_t fee_multiplier, uint64_t fee_quantization_mask);
 	uint64_t calculate_fee(bool use_per_byte_fee, const cryptonote::transaction &tx, size_t blob_size, uint64_t fee_per_b,uint64_t fee_per_o, uint64_t fee_multiplier, uint64_t fee_quantization_mask);
@@ -68,9 +76,9 @@ namespace beldex_fee_utils
 
 	uint64_t calculate_fee_from_size_1(uint64_t fee_per_b, uint64_t fee_per_o, size_t bytes, uint64_t pct);
 	
-	size_t estimate_rct_tx_size(int n_inputs, int mixin, int n_outputs, size_t extra_size, bool bulletproof, bool clsag);
-	uint64_t estimate_tx_weight(bool use_rct, int n_inputs, int mixin, int n_outputs, size_t extra_size, bool bulletproof, bool clsag);
-	size_t estimate_tx_size(bool use_rct, int n_inputs, int mixin, int n_outputs, size_t extra_size, bool bulletproof, bool clsag);
+	size_t estimate_rct_tx_size(int n_inputs, int mixin, int n_outputs, size_t extra_size, bool bulletproof, bool clsag, int n_zc_outputs = 0, int n_zc_inputs = 0);
+	uint64_t estimate_tx_weight(bool use_rct, int n_inputs, int mixin, int n_outputs, size_t extra_size, bool bulletproof, bool clsag, int n_zc_outputs = 0, int n_zc_inputs = 0);
+	size_t estimate_tx_size(bool use_rct, int n_inputs, int mixin, int n_outputs, size_t extra_size, bool bulletproof, bool clsag, int n_zc_outputs = 0, int n_zc_inputs = 0);
 	uint64_t estimated_tx_network_fee( // convenience function for size + calc
 		uint64_t fee_per_b,
 		uint64_t fee_per_o,

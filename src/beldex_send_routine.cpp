@@ -268,6 +268,24 @@ LightwalletAPI_Res_GetUnspentOuts beldex_send_routine::new__parsed_res__get_unsp
 			out.global_index = stoull(output_desc.second.get<string>("global_index"));
 			out.index = output__index;
 			out.tx_pub_key = *optl__tx_pub_key; // just b/c we've already accessed it above
+			// HF21 private token fields. All optional: an output without them is
+			// an ordinary BDX output, so a server that predates tokens is
+			// unaffected. token_id is the LWS's decode (it holds the view key and
+			// already decodes `amount` the same way) and is used only to select
+			// inputs; create_transaction re-derives it locally and rejects a
+			// mismatch.
+			out.token_id = output_desc.second.get_optional<string>("token_id");
+			out.blinded_token_id = output_desc.second.get_optional<string>("blinded_token_id");
+			out.amount_commitment = output_desc.second.get_optional<string>("amount_commitment");
+			{
+				boost::optional<string> enc = output_desc.second.get_optional<string>("encrypted_amount");
+				if (enc != none && !enc->empty()) {
+					out.encrypted_amount = stoull(*enc);
+				}
+			}
+			if (out.token_id != none && out.token_id->empty()) out.token_id = none;
+			if (out.blinded_token_id != none && out.blinded_token_id->empty()) out.blinded_token_id = none;
+			if (out.amount_commitment != none && out.amount_commitment->empty()) out.amount_commitment = none;
 			//
 			unspent_outs.push_back(std::move(out));
 		}
@@ -313,6 +331,9 @@ LightwalletAPI_Res_GetRandomOuts beldex_send_routine::new__parsed_res__get_rando
 			}
 			amountOutput.public_key = mix_out_output_desc.second.get<string>("public_key");
 			amountOutput.rct = mix_out_output_desc.second.get_optional<string>("rct");
+			// HF21: present when the decoy is itself a tx_out_zarcanum; needed
+			// for the X layer of the CLSAG-GGX ring.
+			amountOutput.blinded_token_id = mix_out_output_desc.second.get_optional<string>("blinded_token_id");
 			//
 			amountAndOuts.outputs.push_back(std::move(amountOutput));
 		}
