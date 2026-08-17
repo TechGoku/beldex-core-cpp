@@ -295,6 +295,51 @@ static void _put_token_fields(boost::property_tree::ptree &out_ptree, const Spen
 		out_ptree.put("encrypted_amount", RetVals_Transforms::str_from(*out.encrypted_amount));
 	}
 }
+// HF21: parse a token descriptor operation -- "deploy a new asset" -- out of a
+// step1/step2 request. Absent means an ordinary transfer, so every existing
+// caller is untouched.
+//
+// The token id is derived here from the descriptor rather than read from the
+// request: it IS the descriptor (a hash-to-point over its serialization plus the
+// salt), so accepting a caller-supplied one would only create a way for the two
+// to disagree. create_transaction re-derives it a third time and refuses to
+// build if the answer changes.
+static bool _parse_token_operation(
+	boost::property_tree::ptree &json_root,
+	boost::optional<token_operation_data> &token_op,
+	string &err_msg
+) {
+	boost::optional<boost::property_tree::ptree &> optl__op = json_root.get_child_optional("token_operation");
+	if (optl__op == none) {
+		return true;
+	}
+	auto &op_json = *optl__op;
+	token_operation_data data{};
+	auto &tdo = data.tdo;
+	tdo.operation_type = cryptonote::token_descriptor_operation_type::register_token;
+	tdo.fields = (uint8_t)(cryptonote::token_field_descriptor | cryptonote::token_field_token_id_salt);
+	//
+	auto &descriptor = tdo.descriptor;
+	descriptor.ticker = op_json.get<string>("ticker");
+	descriptor.full_name = op_json.get<string>("full_name", "");
+	descriptor.meta_info = op_json.get<string>("meta_info", "");
+	descriptor.decimal_point = (uint8_t)stoul(op_json.get<string>("decimal_point"));
+	descriptor.total_max_supply = stoull(op_json.get<string>("total_max_supply"));
+	descriptor.current_supply = stoull(op_json.get<string>("current_supply"));
+	if (!epee::string_tools::hex_to_pod(op_json.get<string>("owner"), descriptor.owner)) {
+		err_msg = "Invalid token owner public key";
+		return false;
+	}
+	tdo.token_id_salt = (uint32_t)stoul(op_json.get<string>("token_id_salt"));
+	//
+	data.token_id = cryptonote::get_or_calculate_token_id(tdo);
+	if (data.token_id == crypto::null_tid) {
+		err_msg = "Could not derive a token id from the descriptor";
+		return false;
+	}
+	token_op = std::move(data);
+	return true;
+}
 //
 string serial_bridge::send_step1__prepare_params_for_get_decoys(const string &args_string)
 { // TODO: possibly allow this fn to take tx sec key as an arg, although, random bit gen is now handled well by emscripten
@@ -355,6 +400,13 @@ string serial_bridge::send_step1__prepare_params_for_get_decoys(const string &ar
 	if (optl__fork_version_string != none) {
 		fork_version = stoul(*optl__fork_version_string);
 	}
+	boost::optional<token_operation_data> optl__token_op = none;
+	{
+		string token_op_err;
+		if (!_parse_token_operation(json_root, optl__token_op, token_op_err)) {
+			return error_ret_json_from_message(token_op_err);
+		}
+	}
 	Send_Step1_RetVals retVals;
 	beldex_transfer_utils::send_step1__prepare_params_for_get_decoys(
 		retVals,
@@ -371,8 +423,13 @@ string serial_bridge::send_step1__prepare_params_for_get_decoys(const string &ar
 		//
 		optl__prior_attempt_size_calcd_fee, // use this for passing step2 "must-reconstruct" return values back in, i.e. re-entry; when nil, defaults to attempt at network min
 		optl__prior_attempt_unspent_outs_to_mix_outs, // on re-entry, re-use the same outs and requested decoys, in order to land on the correct calculated fee
-		json_root.get_optional<string>("token_id"), // HF21: send this token instead of BDX
-		fork_version
+		// HF21: for a deploy this is the id of the token being created, which
+		// tags the destinations; token_operation is what makes it a deploy.
+		optl__token_op != none
+			? boost::optional<string>(epee::string_tools::pod_to_hex(optl__token_op->token_id))
+			: json_root.get_optional<string>("token_id"),
+		fork_version,
+		optl__token_op
 	);
 	boost::property_tree::ptree root;
 	if (retVals.errCode != noError) {
@@ -394,6 +451,11 @@ string serial_bridge::send_step1__prepare_params_for_get_decoys(const string &ar
 		// HF21: the token side of a private-token send. Zero for a BDX send.
 		root.put("token_final_total_wo_fee", RetVals_Transforms::str_from(retVals.token_final_total_wo_fee));
 		root.put("token_change_amount", RetVals_Transforms::str_from(retVals.token_change_amount));
+		if (optl__token_op != none) {
+			// The id the new asset will have on chain. The caller needs it to tag
+			// step2's destinations and to show/store the result.
+			root.put("token_id", epee::string_tools::pod_to_hex(optl__token_op->token_id));
+		}
 		{
 			boost::property_tree::ptree using_outs_ptree;
 			BOOST_FOREACH(SpendableOutput &out, retVals.using_outs)
@@ -581,6 +643,10 @@ string serial_bridge::send_step2__try_create_transaction(const string &args_stri
 		out.global_index = stoull(output_desc.second.get<string>("global_index"));
 		out.index = stoull(output_desc.second.get<string>("index"));
 		out.tx_pub_key = output_desc.second.get<string>("tx_pub_key");
+		// HF21: without these a zarcanum output handed back from step1 would be
+		// rebuilt here as an ordinary BDX output, and the token input branch in
+		// create_transaction would never run.
+		_parse_token_fields_onto(output_desc.second, out);
 		//
 		using_outs.push_back(std::move(out));
 	}
@@ -618,6 +684,18 @@ string serial_bridge::send_step2__try_create_transaction(const string &args_stri
 			optl__token_change_amount = stoull(*tca);
 		}
 	}
+	boost::optional<token_operation_data> optl__token_op = none;
+	{
+		string token_op_err;
+		if (!_parse_token_operation(json_root, optl__token_op, token_op_err)) {
+			return error_ret_json_from_message(token_op_err);
+		}
+		if (optl__token_op != none) {
+			// Same descriptor as step1 => same id. Tag the destination with it
+			// rather than whatever "token_id" the caller may have echoed back.
+			optl__token_id = epee::string_tools::pod_to_hex(optl__token_op->token_id);
+		}
+	}
 	Send_Step2_RetVals retVals;
 	boost::optional<master_node_data> mn_data = boost::none;
 	beldex_transfer_utils::send_step2__try_create_transaction(
@@ -647,7 +725,8 @@ string serial_bridge::send_step2__try_create_transaction(const string &args_stri
 			? vector<boost::optional<string>>{optl__token_id}
 			: vector<boost::optional<string>>{},
 		optl__token_change_amount,
-		fork_version
+		fork_version,
+		optl__token_op
 	);
 	boost::property_tree::ptree root;
 	if (retVals.errCode != noError) {
@@ -663,6 +742,9 @@ string serial_bridge::send_step2__try_create_transaction(const string &args_stri
 			root.put("tx_hash", *(retVals.tx_hash_string));
 			root.put("tx_key", *(retVals.tx_key_string));
 			root.put("tx_pub_key", *(retVals.tx_pub_key_string));
+			if (optl__token_op != none) {
+				root.put("token_id", epee::string_tools::pod_to_hex(optl__token_op->token_id));
+			}
 		}
 	}
 	return ret_json_from_root(root);

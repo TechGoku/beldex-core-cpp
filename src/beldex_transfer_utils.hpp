@@ -45,6 +45,7 @@
 #include "beldex_fork_rules.hpp"
 #include "beldex_fee_utils.hpp"
 #include "register_mn_data.hpp"
+#include "token_operation_data.hpp"
 //
 using namespace tools;
 #include "tools__ret_vals.hpp"
@@ -135,6 +136,10 @@ namespace beldex_transfer_utils
 		cantGetDecryptedMaskFromRCTHex	= 21,
 		notEnoughUsableDecoysFound		= 22,
 		tooManyDecoysRemaining			= 23,
+		// HF21 private tokens. Appended at the end so no existing code's numeric
+		// value moves -- these are serialized to JavaScript as bare integers.
+		couldntAddTokenOperationToTXExtra = 24,
+		invalidTokenOperation			= 25,
 		needMoreMoneyThanFound			= 90
 	};
 	static inline const char *err_msg_from_err_code__create_transaction(CreateTransactionErrorCode code)
@@ -190,6 +195,10 @@ namespace beldex_transfer_utils
 				return "Too many unused decoys remaining";
 			case cantGetDecryptedMaskFromRCTHex:
 				return "Can't get decrypted mask from 'rct' hex";
+			case couldntAddTokenOperationToTXExtra:
+				return "Couldn't add the token operation to tx extra";
+			case invalidTokenOperation:
+				return "Invalid token operation";
 		}
         return "Unknown error";
 	}
@@ -252,7 +261,13 @@ namespace beldex_transfer_utils
 		//! and the native pool (to cover the fee). When unset, behaviour is
 		//! exactly as before.
 		boost::optional<string> requested_token_id = none,
-		uint8_t hf_version = 0 // 0 = unknown; treated as pre-HF21
+		uint8_t hf_version = 0, // 0 = unknown; treated as pre-HF21
+		//! HF21+: when set, this is a token descriptor operation (deploy a new
+		//! asset) rather than a transfer. It has no token inputs -- the token
+		//! does not exist yet -- so selection here is native-only, but the tx is
+		//! much larger (MIN_TOKEN_MINT_OUTPUTS zarcanum outputs + the descriptor
+		//! in tx.extra) and carries a protocol burn on top of the network fee.
+		const boost::optional<token_operation_data> &token_op = none
 	);
 	struct Tie_Outs_to_Mix_Outs_RetVals
 	{
@@ -310,7 +325,9 @@ namespace beldex_transfer_utils
 		//! Empty (or an unset entry) means that destination is native BDX.
 		const vector<boost::optional<string>> &destination_token_ids = {},
 		uint64_t token_change_amount = 0,
-		uint8_t hf_version = 0
+		uint8_t hf_version = 0,
+		//! HF21+: see send_step1__prepare_params_for_get_decoys.
+		const boost::optional<token_operation_data> &token_op = none
 	);
 	//
 	//
@@ -346,7 +363,10 @@ namespace beldex_transfer_utils
 		network_type nettype 							= MAINNET,
 		const vector<boost::optional<string>> &destination_token_ids = {},
 		uint64_t token_change_amount					= 0,
-		uint8_t hf_version								= 0
+		uint8_t hf_version								= 0,
+		//! HF21+: see send_step1__prepare_params_for_get_decoys. This is where
+		//! the descriptor operation is written into `extra`.
+		const boost::optional<token_operation_data> &token_op = none
 	);
 	struct TransactionConstruction_RetVals
 	{
@@ -382,7 +402,11 @@ namespace beldex_transfer_utils
 		//! Real network fork version. Previously hard-coded to 18 inside
 		//! create_transaction, which silently disabled every gate above it.
 		//! 0 keeps the historical behaviour.
-		uint8_t hf_version								= 0
+		uint8_t hf_version								= 0,
+		//! HF21+: selects the txtype and the burn, and pads the destinations up
+		//! to MIN_TOKEN_MINT_OUTPUTS. `extra` must already contain the matching
+		//! descriptor operation -- convenience__create_transaction puts it there.
+		const boost::optional<token_operation_data> &token_op = none
 	);
 }
 
