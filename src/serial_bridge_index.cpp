@@ -94,6 +94,26 @@ string serial_bridge::new_payment_id()
 	return beldex_paymentID_utils::new_short_plain_paymentID_string();
 }
 
+string serial_bridge::token_registration_info()
+{
+	boost::property_tree::ptree root;
+	// Amounts are atomic units, as strings, like every other amount crossing
+	// this bridge -- 10000 BDX does not fit a JS number safely.
+	root.put("collateral_amount", RetVals_Transforms::str_from(tokens::REGISTRATION_COLLATERAL_AMOUNT));
+	root.put("collateral_lock_blocks", RetVals_Transforms::str_from(tokens::REGISTRATION_COLLATERAL_LOCK_BLOCKS));
+	// Minimum zarcanum outputs a registration must emit; the wallet does not
+	// choose this, but it explains why the fee is larger than a normal send.
+	root.put("min_token_outputs", RetVals_Transforms::str_from((uint64_t)MIN_TOKEN_MINT_OUTPUTS));
+	// The fork the network must be on before a registration can be built at all.
+	root.put("min_fork_version", RetVals_Transforms::str_from((uint64_t)HF_VERSION_PRIVATE_TOKENS));
+	// Descriptor limits, so a UI can validate as the user types instead of
+	// failing at submit. These mirror the checks in the send bridge.
+	root.put("max_ticker_length", RetVals_Transforms::str_from((uint64_t)14));
+	root.put("max_full_name_length", RetVals_Transforms::str_from((uint64_t)400));
+	root.put("max_decimal_point", RetVals_Transforms::str_from((uint64_t)18));
+	return ret_json_from_root(root);
+}
+
 string serial_bridge::newly_created_wallet(const string localeLanguageCode, const string nettype)
 {
 	beldex_wallet_utils::WalletDescriptionRetVals retVals;

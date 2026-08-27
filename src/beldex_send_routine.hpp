@@ -209,6 +209,10 @@ namespace beldex_send_routine
 		boost::optional<uint64_t> fee_mask;
 		boost::optional<vector<SpendableOutput>> unspent_outs;
 		uint8_t fork_version;
+		//! Chain tip, as the server sees it. HF22 token registration must lock
+		//! its collateral output to an absolute height, and this is the only
+		//! place the client learns where the chain is. 0 = not supplied.
+		uint64_t blockchain_height;
 	};
 	struct LightwalletAPI_Res_GetRandomOuts
 	{

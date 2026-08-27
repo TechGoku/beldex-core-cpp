@@ -220,7 +220,9 @@ void beldex_transfer_utils::send_step1__prepare_params_for_get_decoys(
 	boost::optional<SpendableOutputToRandomAmountOutputs> prior_attempt_unspent_outs_to_mix_outs,
 	boost::optional<string> requested_token_id,
 	uint8_t hf_version,
-	const boost::optional<token_operation_data> &token_op
+	const boost::optional<token_operation_data> &token_op,
+	//! Chain tip, for the registration collateral's absolute unlock height.
+	uint64_t blockchain_height
 ) {
 	retVals = {};
 	const bool tokens_active = hf_version >= HF_VERSION_PRIVATE_TOKENS;
@@ -352,13 +354,18 @@ void beldex_transfer_utils::send_step1__prepare_params_for_get_decoys(
 		// fails to construct at the very last step.
 		uint64_t native_using = 0;
 		size_t n_native_used = 0;
-		uint64_t needed_total = estimate_with(1) + burn_amount;
+		// HF22: a registration locks REGISTRATION_COLLATERAL_AMOUNT in a native
+		// output back to the sender. It is not spent away like the burn, but it
+		// still has to be covered by the inputs we select here, or construction
+		// fails at the last step for want of funds.
+		const uint64_t collateral_amount = token_op->collateral_amount();
+		uint64_t needed_total = estimate_with(1) + burn_amount + collateral_amount;
 		while (native_using < needed_total && native_pool.size() > 0) {
 			auto out = pop_random_value(native_pool);
 			native_using += out.amount;
 			retVals.using_outs.push_back(std::move(out));
 			++n_native_used;
-			needed_total = estimate_with(n_native_used) + burn_amount; // each input grows the tx
+			needed_total = estimate_with(n_native_used) + burn_amount + collateral_amount; // each input grows the tx
 		}
 		retVals.spendable_balance = native_using;
 		retVals.required_balance = needed_total;
@@ -366,8 +373,12 @@ void beldex_transfer_utils::send_step1__prepare_params_for_get_decoys(
 			retVals.errCode = needMoreMoneyThanFound;
 			return;
 		}
-		retVals.using_fee = needed_total; // network fee + protocol burn
-		retVals.final_total_wo_fee = 0;   // nothing native is being sent
+		// The collateral is selected for above but it is NOT a fee: it comes back
+		// to this wallet as a locked output. Report it as the amount being sent
+		// so the caller's balance reconciliation (fee + change + sent == found)
+		// adds up, and so the UI shows a 0.33 BDX fee rather than a 10,000 one.
+		retVals.using_fee = needed_total - collateral_amount; // network fee + protocol burn
+		retVals.final_total_wo_fee = collateral_amount;       // locked collateral, returned to sender
 		retVals.change_amount = native_using - needed_total;
 		uint64_t initial_supply = 0;
 		for (uint64_t amount : sending_amounts) {
@@ -663,7 +674,9 @@ void beldex_transfer_utils::send_step2__try_create_transaction(
 	const vector<boost::optional<string>> &destination_token_ids,
 	uint64_t token_change_amount,
 	uint8_t hf_version,
-	const boost::optional<token_operation_data> &token_op
+	const boost::optional<token_operation_data> &token_op,
+	//! Chain tip, for the registration collateral's absolute unlock height.
+	uint64_t blockchain_height
 ) {
 	retVals = {};
 	//
@@ -680,7 +693,7 @@ void beldex_transfer_utils::send_step2__try_create_transaction(
 		use_fork_rules_fn,
 		unlock_time,
 		nettype, // TODO: move to after from_address_string
-		destination_token_ids, token_change_amount, hf_version, token_op
+		destination_token_ids, token_change_amount, hf_version, token_op, blockchain_height
 	);
 	if (create_tx__retVals.errCode != noError) {
 		retVals.errCode = create_tx__retVals.errCode;
@@ -734,7 +747,9 @@ void beldex_transfer_utils::create_transaction(
 	const vector<boost::optional<string>> &destination_token_ids,
 	uint64_t token_change_amount,
 	uint8_t hf_version,
-	const boost::optional<token_operation_data> &token_op
+	const boost::optional<token_operation_data> &token_op,
+	//! Chain tip, for the registration collateral's absolute unlock height.
+	uint64_t blockchain_height
 ) {
 	retVals.errCode = noError;
 	// Historically this function hard-coded hf_version = 18, which meant every
@@ -802,6 +817,12 @@ void beldex_transfer_utils::create_transaction(
  		if (!dst_is_token) {
  			needed_money += sending_amounts[i];
  		}
+ 	}
+ 	// HF22: the registration collateral is a native output this function emits
+ 	// further down, so the inputs must cover it exactly like any other BDX
+ 	// destination -- it is locked, not burned, but it still leaves the balance.
+ 	if (token_op != none) {
+ 		needed_money += token_op->collateral_amount();
  	}
 	//
 	uint64_t found_money = 0;
@@ -1066,6 +1087,34 @@ void beldex_transfer_utils::create_transaction(
  		token_change_dst.token_id = sending_token_id;
  		splitted_dsts.push_back(token_change_dst);
  	}
+ 	// HF22: a token registration must carry a native output back to the sender
+ 	// for REGISTRATION_COLLATERAL_AMOUNT, locked for
+ 	// REGISTRATION_COLLATERAL_LOCK_BLOCKS. Consensus checks for exactly this and
+ 	// rejects a registration without it. The lock is an ABSOLUTE height, so it
+ 	// needs the chain tip; without one we cannot build a valid registration and
+ 	// must say so rather than emit a transaction the network will refuse.
+ 	if (token_op != none && token_op->collateral_amount() != 0) {
+ 		if (blockchain_height == 0) {
+ 			retVals.errCode = invalidTokenOperation;
+ 			return;
+ 		}
+ 		tx_destination_entry collateral_dst{};
+ 		collateral_dst.addr = sender_account_keys.m_account_address;
+ 		collateral_dst.amount = token_op->collateral_amount();
+ 		collateral_dst.is_subaddress = false;
+ 		collateral_dst.token_id = crypto::null_tid; // native BDX, not a token output
+ 		// Consensus checks unlock_time >= (daemon's height at validation) +
+ 		// LOCK_BLOCKS. Our height comes from the light wallet server and is
+ 		// already behind by the time we see it, and the chain advances again
+ 		// before the transaction is validated -- so targeting the exact minimum
+ 		// is guaranteed to fail as soon as one block arrives. Overshoot by a
+ 		// margin instead; it only extends an already six-month lock slightly,
+ 		// whereas undershooting makes the transaction unusable.
+ 		collateral_dst.unlock_time = blockchain_height
+ 			+ tokens::REGISTRATION_COLLATERAL_LOCK_BLOCKS
+ 			+ TOKEN_REGISTRATION_UNLOCK_MARGIN_BLOCKS;
+ 		splitted_dsts.push_back(collateral_dst);
+ 	}
  	// HF21: a deploy/mint must emit at least MIN_TOKEN_MINT_OUTPUTS zarcanum
  	// outputs. The chain enforces this so a brand-new token has a ring to hide
  	// in from its very first spend -- with a single output there would be
@@ -1213,7 +1262,9 @@ void beldex_transfer_utils::convenience__create_transaction(
 	const vector<boost::optional<string>> &destination_token_ids,
 	uint64_t token_change_amount,
 	uint8_t hf_version,
-	const boost::optional<token_operation_data> &token_op
+	const boost::optional<token_operation_data> &token_op,
+	//! Chain tip, for the registration collateral's absolute unlock height.
+	uint64_t blockchain_height
 ) {
 	retVals.errCode = noError;
 	//
@@ -1333,7 +1384,7 @@ void beldex_transfer_utils::convenience__create_transaction(
 		extra, // TODO: move to after address
 		use_fork_rules_fn,
 		unlock_time, true/*rct*/, nettype,
-		destination_token_ids, token_change_amount, hf_version, token_op
+		destination_token_ids, token_change_amount, hf_version, token_op, blockchain_height
 	);
 	if (actualCall_retVals.errCode != noError) {
 		retVals.errCode = actualCall_retVals.errCode; // pass-through

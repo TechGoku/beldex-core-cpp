@@ -267,7 +267,9 @@ namespace beldex_transfer_utils
 		//! does not exist yet -- so selection here is native-only, but the tx is
 		//! much larger (MIN_TOKEN_MINT_OUTPUTS zarcanum outputs + the descriptor
 		//! in tx.extra) and carries a protocol burn on top of the network fee.
-		const boost::optional<token_operation_data> &token_op = none
+		const boost::optional<token_operation_data> &token_op = none,
+		//! Chain tip, for the registration collateral's absolute unlock height.
+		uint64_t blockchain_height = 0
 	);
 	struct Tie_Outs_to_Mix_Outs_RetVals
 	{
@@ -327,7 +329,9 @@ namespace beldex_transfer_utils
 		uint64_t token_change_amount = 0,
 		uint8_t hf_version = 0,
 		//! HF21+: see send_step1__prepare_params_for_get_decoys.
-		const boost::optional<token_operation_data> &token_op = none
+		const boost::optional<token_operation_data> &token_op = none,
+		//! Chain tip, for the registration collateral's absolute unlock height.
+		uint64_t blockchain_height = 0
 	);
 	//
 	//
@@ -366,7 +370,9 @@ namespace beldex_transfer_utils
 		uint8_t hf_version								= 0,
 		//! HF21+: see send_step1__prepare_params_for_get_decoys. This is where
 		//! the descriptor operation is written into `extra`.
-		const boost::optional<token_operation_data> &token_op = none
+		const boost::optional<token_operation_data> &token_op = none,
+		//! Chain tip, for the registration collateral's absolute unlock height.
+		uint64_t blockchain_height = 0
 	);
 	struct TransactionConstruction_RetVals
 	{
@@ -406,7 +412,9 @@ namespace beldex_transfer_utils
 		//! HF21+: selects the txtype and the burn, and pads the destinations up
 		//! to MIN_TOKEN_MINT_OUTPUTS. `extra` must already contain the matching
 		//! descriptor operation -- convenience__create_transaction puts it there.
-		const boost::optional<token_operation_data> &token_op = none
+		const boost::optional<token_operation_data> &token_op = none,
+		//! Chain tip, for the registration collateral's absolute unlock height.
+		uint64_t blockchain_height = 0
 	);
 }
 

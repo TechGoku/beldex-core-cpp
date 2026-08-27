@@ -291,10 +291,12 @@ LightwalletAPI_Res_GetUnspentOuts beldex_send_routine::new__parsed_res__get_unsp
 		}
 	}
 	auto fork_version = res.get_optional<uint8_t>("fork_version");
+	auto blockchain_height = res.get_optional<uint64_t>("blockchain_height");
 	return LightwalletAPI_Res_GetUnspentOuts{
 		none,
 		final__per_byte_fee,final_fee_per_output, fee_mask, unspent_outs,
-		fork_version ? *fork_version : static_cast<uint8_t>(0)
+		fork_version ? *fork_version : static_cast<uint8_t>(0),
+		blockchain_height ? *blockchain_height : static_cast<uint64_t>(0)
 	};
 }
 LightwalletAPI_Res_GetRandomOuts beldex_send_routine::new__parsed_res__get_random_outs(

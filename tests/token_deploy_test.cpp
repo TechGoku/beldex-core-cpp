@@ -123,8 +123,8 @@ static token_operation_data make_deploy_op(const cryptonote::account_keys &keys,
     op.tdo.operation_type = cryptonote::token_descriptor_operation_type::register_token;
     op.tdo.fields = (uint8_t)(cryptonote::token_field_descriptor | cryptonote::token_field_token_id_salt);
     op.tdo.token_id_salt = salt;
-    op.tdo.descriptor.ticker = "ZODI";
-    op.tdo.descriptor.full_name = "Zodiako Test Asset";
+    op.tdo.descriptor.ticker = "DEMO";
+    op.tdo.descriptor.full_name = "Demo Token";
     op.tdo.descriptor.meta_info = "";
     op.tdo.descriptor.decimal_point = decimals;
     op.tdo.descriptor.current_supply = current_supply;
