@@ -73,7 +73,8 @@ boost::optional<uint64_t> _possible_uint64_from_json(
 //
 LightwalletAPI_Req_GetUnspentOuts beldex_send_routine::new__req_params__get_unspent_outs(
 	string from_address_string,
-	string sec_viewKey_string
+	string sec_viewKey_string,
+	const boost::optional<string> &token_id
 ) {
 	ostringstream dustT_ss;
 	dustT_ss << dust_threshold();
@@ -83,7 +84,8 @@ LightwalletAPI_Req_GetUnspentOuts beldex_send_routine::new__req_params__get_unsp
 		"0", // amount - always sent as "0"
 		fixed_mixinsize(),
 		true, // use dust
-		dustT_ss.str()
+		dustT_ss.str(),
+		token_id != none ? *token_id : string()
 	};
 }
 
@@ -104,6 +106,17 @@ LightwalletAPI_Req_GetRandomOuts beldex_send_routine::new__req_params__get_rando
 		decoy_requests = step1__using_outs;
 	}
 
+	/* HF22: each ring is drawn from the bucket its input belongs to. A token
+	   transfer spends token outputs for the amount and native outputs for the
+	   fee, so this array is mixed and must stay parallel to `amounts`. */
+	vector<string> decoy_req__token_ids;
+	for (SpendableOutput &using_out : decoy_requests)
+	{
+		decoy_req__token_ids.push_back(
+			using_out.token_id != none ? *(using_out.token_id) : string()
+		);
+	}
+
 	vector<string> decoy_req__amounts;
 	for(SpendableOutput &using_out : decoy_requests)
 	{
@@ -117,7 +130,8 @@ LightwalletAPI_Req_GetRandomOuts beldex_send_routine::new__req_params__get_rando
 	}
 	return LightwalletAPI_Req_GetRandomOuts{
 		decoy_req__amounts,
-		fixed_mixinsize() + 1 // count; Add one to mixin so we can skip real output key if necessary
+		fixed_mixinsize() + 1, // count; Add one to mixin so we can skip real output key if necessary
+		decoy_req__token_ids
 	};
 }
 //

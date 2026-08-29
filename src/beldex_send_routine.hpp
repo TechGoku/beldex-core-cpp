@@ -69,6 +69,12 @@ namespace beldex_send_routine
 		size_t mixin;
 		bool use_dust; // true; send-funds is now coded to filter unmixable and below threshold dust properly when sweeping and not sweeping
 		const string dust_threshold; // uint64_string; String(MoneroConstants.dustThreshold, radix: 10)
+		// HF22: hex id of a privacy token whose outputs should come back too.
+		// Empty for a BDX send, which must never be offered token outputs. Set,
+		// the server returns native AND that token's outputs in one reply --
+		// both are needed, since a token transfer spends token outputs for the
+		// amount and native outputs for the fee, which is always BDX.
+		const string token_id;
 	};
 	static inline string json_string_from_req_GetUnspentOuts(const LightwalletAPI_Req_GetUnspentOuts &req_params)
 	{
@@ -79,6 +85,9 @@ namespace beldex_send_routine
 		req_params_root.put("dust_threshold", req_params.dust_threshold);
 		req_params_root.put("use_dust", req_params.use_dust);
 		req_params_root.put("mixin", req_params.mixin);
+		if (!req_params.token_id.empty()) {
+			req_params_root.put("token_id", req_params.token_id);
+		}
 		stringstream req_params_ss;
 		boost::property_tree::write_json(req_params_ss, req_params_root, false/*pretty*/);
 		//
@@ -86,7 +95,8 @@ namespace beldex_send_routine
 	}
 	LightwalletAPI_Req_GetUnspentOuts new__req_params__get_unspent_outs( // used internally and by emscr async send impl
 		string from_address_string,
-		string sec_viewKey_string
+		string sec_viewKey_string,
+		const boost::optional<string> &token_id = boost::none
 	);
 	typedef std::function<void(
 		LightwalletAPI_Req_GetUnspentOuts, // req_params - use these for making the request
@@ -97,6 +107,11 @@ namespace beldex_send_routine
 	{
 		const vector<string> amounts;
 		const size_t count; // =mixin+1
+		// HF22: parallel to `amounts` -- the token each ring is for, "" for
+		// native. A ring must be drawn from outputs of the same kind, and one
+		// transaction needs both: token outputs for the amount, native outputs
+		// for the fee. Empty leaves every ring native.
+		const vector<string> token_ids;
 	};
 	static inline string json_string_from_req_GetRandomOuts(const LightwalletAPI_Req_GetRandomOuts &req_params)
 	{
@@ -110,6 +125,19 @@ namespace beldex_send_routine
 		}
 		req_params_root.add_child("amounts", amounts_ptree);
 		req_params_root.put("count", req_params.count);
+		bool any_token = false;
+		for (const string &tid : req_params.token_ids) {
+			if (!tid.empty()) { any_token = true; break; }
+		}
+		if (any_token) {
+			boost::property_tree::ptree token_ids_ptree;
+			for (const string &tid : req_params.token_ids) {
+				property_tree::ptree tid_child;
+				tid_child.put("", tid);
+				token_ids_ptree.push_back(std::make_pair("", tid_child));
+			}
+			req_params_root.add_child("token_ids", token_ids_ptree);
+		}
 		stringstream req_params_ss;
 		boost::property_tree::write_json(req_params_ss, req_params_root, false/*pretty*/);
 

@@ -398,7 +398,16 @@ void beldex_transfer_utils::send_step1__prepare_params_for_get_decoys(
 		vector<SpendableOutput> token_pool, native_pool;
 		for (const auto &out : unspent_outs) {
 			if (out.is_zarcanum()) {
-				if (out.token_id != none && *out.token_id == *requested_token_id) {
+				if (out.token_id != none && *out.token_id == *requested_token_id
+				    && out.amount != 0) {
+					// Zero-amount token outputs are skipped. A registration fans
+					// its initial supply out over MIN_TOKEN_MINT_OUTPUTS outputs,
+					// and all but one of them carry nothing -- they exist to pad
+					// the anonymity set, not to be spent. Selecting them adds
+					// nothing to the amount while adding an input that has to be
+					// signed and verified, and the network rejects the result
+					// ("ZC_sig verification failed"). Dropping them also keeps
+					// the transaction smaller and the fee lower.
 					token_pool.push_back(out);
 				}
 				continue; // a token of some OTHER token is not spendable here
