@@ -248,14 +248,14 @@ int main()
 
     check(tx.type == cryptonote::txtype::deploy_new_token, "tx.type is deploy_new_token");
 
-    size_t n_zc_outs = 0, n_native_outs = 0;
+    size_t n_zy_outs = 0, n_native_outs = 0;
     for (const auto &o : tx.vout) {
-        if (std::holds_alternative<cryptonote::tx_out_zarcanum>(o.target)) ++n_zc_outs;
+        if (std::holds_alternative<cryptonote::tx_out_zyphora>(o.target)) ++n_zy_outs;
         else ++n_native_outs;
     }
-    check(n_zc_outs >= (size_t)MIN_TOKEN_MINT_OUTPUTS,
+    check(n_zy_outs >= (size_t)MIN_TOKEN_MINT_OUTPUTS,
           "at least MIN_TOKEN_MINT_OUTPUTS zarcanum outputs were emitted");
-    cout << "  zarcanum outputs: " << n_zc_outs << ", native outputs: " << n_native_outs << "\n";
+    cout << "  zarcanum outputs: " << n_zy_outs << ", native outputs: " << n_native_outs << "\n";
 
     cryptonote::tx_extra_token_descriptor_operation on_chain_tdo{};
     check(cryptonote::get_token_descriptor_operation_from_tx_extra(tx.extra, on_chain_tdo),
@@ -274,7 +274,7 @@ int main()
     check_eq(burn_on_chain, expected_burn, "the burn recorded in tx.extra is the protocol amount");
 
     check(!tx.token_proofs.empty(), "token proofs were attached");
-    cout << "  token proofs: " << tx.token_proofs.size() << ", zc_sig: " << tx.zc_sig.size() << "\n";
+    cout << "  token proofs: " << tx.token_proofs.size() << ", zy_sig: " << tx.zy_sig.size() << "\n";
 
     // ── regression: an ordinary BDX send is untouched by any of this ─────────
     cout << "=== regression: ordinary BDX send ===\n";

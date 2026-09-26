@@ -155,7 +155,7 @@ int beldex_fee_utils::get_fee_algorithm(use_fork_rules_fn_type use_fork_rules_fn
 		return 1;
 	return 0;
 }
-// HF21: bytes added by the private-token parts of a transaction, none of which
+// HF21: bytes added by the privacy-token parts of a transaction, none of which
 // the classic RingCT model above accounts for.
 size_t beldex_fee_utils::estimate_zc_extra_size(int n_zc_outputs, int n_zc_inputs, int mixin)
 {
@@ -165,7 +165,7 @@ size_t beldex_fee_utils::estimate_zc_extra_size(int n_zc_outputs, int n_zc_input
 	size_t size = 0;
 	const int ring_size = mixin + 1;
 	//
-	// tx_out_zarcanum is larger than txout_to_key: stealth_address +
+	// tx_out_zyphora is larger than txout_to_key: stealth_address +
 	// amount_commitment + blinded_token_id (3*32) + varint encrypted_amount
 	// (<=9) + mix_attr + version, against the 32 the base model already
 	// charged for the output key.
@@ -195,7 +195,7 @@ size_t beldex_fee_utils::estimate_zc_extra_size(int n_zc_outputs, int n_zc_input
 		size += 4 * 32;
 	}
 	//
-	// ZC_sig per token input: CLSAG-GGX carries s_g and s_x (one scalar each
+	// ZY_sig per token input: CLSAG-GGX carries s_g and s_x (one scalar each
 	// per ring member) plus c1, D, E, and the two pseudo-out points.
 	size += (size_t)n_zc_inputs * (2 * 32 * ring_size + 5 * 32);
 	//
@@ -253,7 +253,7 @@ size_t beldex_fee_utils::estimate_rct_tx_size(int n_inputs, int mixin, int n_out
 	// txnFee
 	size += 4;
 	
-	// HF21 private-token parts
+	// HF21 privacy-token parts
 	size += estimate_zc_extra_size(n_zc_outputs, n_zc_inputs, mixin);
 	
 	LOG_PRINT_L2("estimated " << (bulletproof ? "bulletproof" : "borromean") << " rct tx size for " << n_inputs << " inputs with ring size " << (mixin+1) << " and " << n_outputs << " outputs: " << size << " (" << ((32 * n_inputs/*+1*/) + 2 * 32 * (mixin+1) * n_inputs + 32 * n_outputs) << " saved)");

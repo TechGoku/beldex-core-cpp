@@ -67,11 +67,11 @@ namespace beldex_transfer_utils
 		uint64_t global_index;
 		uint64_t index;
 		string tx_pub_key;
-		// ── Private token (HF21+) ──────────────────────────────────────────
-		// Present together, and only for a tx_out_zarcanum. `public_key` then
+		// ── Privacy token (HF21+) ──────────────────────────────────────────
+		// Present together, and only for a tx_out_zyphora. `public_key` then
 		// carries the output's stealth_address rather than a txout_to_key key.
 		// The plaintext token id, amount, Pedersen mask and token-blinding
-		// scalar are all recovered locally by decode_zarcanum_output() -- the
+		// scalar are all recovered locally by decode_zyphora_output() -- the
 		// blinding scalar in particular has no other source, and is required
 		// to rebuild T_real when spending.
 		// Plaintext token id, supplied by the LWS (which holds the view key and
@@ -83,7 +83,7 @@ namespace beldex_transfer_utils
 		boost::optional<string> blinded_token_id;   // T   (64 hex)
 		boost::optional<string> amount_commitment;  // C   (64 hex)
 		boost::optional<uint64_t> encrypted_amount; // amount XOR H("enc_amount"..)
-		bool is_zarcanum() const {
+		bool is_zyphora() const {
 			return blinded_token_id != boost::none
 				&& amount_commitment != boost::none
 				&& encrypted_amount != boost::none;
@@ -94,7 +94,7 @@ namespace beldex_transfer_utils
 		uint64_t global_index; // this is, I believe, presently supplied as a string by the API, probably to avoid overflow
 		string public_key;
 		boost::optional<string> rct;
-		// HF21: the decoy's blinded token id, when it is a tx_out_zarcanum.
+		// HF21: the decoy's blinded token id, when it is a tx_out_zyphora.
 		// Needed to fill tx_source_entry::ring_blinded_token_ids, which is the
 		// third (X) layer of the CLSAG-GGX ring. A decoy that is a native BDX
 		// output has none; see _zc_ring_token_id_for_decoy() for what is used
@@ -136,7 +136,7 @@ namespace beldex_transfer_utils
 		cantGetDecryptedMaskFromRCTHex	= 21,
 		notEnoughUsableDecoysFound		= 22,
 		tooManyDecoysRemaining			= 23,
-		// HF21 private tokens. Appended at the end so no existing code's numeric
+		// HF21 privacy tokens. Appended at the end so no existing code's numeric
 		// value moves -- these are serialized to JavaScript as bare integers.
 		couldntAddTokenOperationToTXExtra = 24,
 		invalidTokenOperation			= 25,
@@ -229,7 +229,7 @@ namespace beldex_transfer_utils
 		uint64_t using_fee;
 		uint64_t final_total_wo_fee;
 		uint64_t change_amount;
-		// ── Private token send (HF21+) ────────────────────────────────────
+		// ── Privacy token send (HF21+) ────────────────────────────────────
 		// Only meaningful when requested_token_id was given. The native
 		// fields above then account for the BDX side (fee + BDX change) and
 		// these for the token side. A token tx spends BOTH: token inputs to
@@ -265,7 +265,7 @@ namespace beldex_transfer_utils
 		//! HF21+: when set, this is a token descriptor operation (deploy a new
 		//! asset) rather than a transfer. It has no token inputs -- the token
 		//! does not exist yet -- so selection here is native-only, but the tx is
-		//! much larger (MIN_TOKEN_MINT_OUTPUTS zarcanum outputs + the descriptor
+		//! much larger (MIN_TOKEN_MINT_OUTPUTS zyphora outputs + the descriptor
 		//! in tx.extra) and carries a protocol burn on top of the network fee.
 		const boost::optional<token_operation_data> &token_op = none,
 		//! Chain tip, for the registration collateral's absolute unlock height.

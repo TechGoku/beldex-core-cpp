@@ -56,7 +56,7 @@ namespace serial_bridge
 	//
 	string new_integrated_address(const string address, const string paymentId, const string nettype);
 	string new_payment_id();
-	//! HF22: what a private-token registration costs and requires. A wallet UI
+	//! HF22: what a privacy-token registration costs and requires. A wallet UI
 	//! needs this *before* it lets someone start -- to show the collateral and
 	//! lock period, and to check the balance itself -- rather than discovering it
 	//! from a failed send. Takes no arguments; these are protocol constants.

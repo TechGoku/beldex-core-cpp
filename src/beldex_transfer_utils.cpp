@@ -229,7 +229,7 @@ void beldex_transfer_utils::send_step1__prepare_params_for_get_decoys(
 	const bool sending_token = requested_token_id != none && !requested_token_id->empty();
 	// A token operation (deploy a new asset) also sets requested_token_id -- to
 	// the id of the token it is creating -- so that the destinations get tagged
-	// as private-token outputs. It is not a transfer of that token though: the
+	// as privacy-token outputs. It is not a transfer of that token though: the
 	// token has no outputs to select from yet, so it takes its own path below
 	// and the transfer path must not claim it.
 	const bool deploying_token = token_op != none;
@@ -286,7 +286,7 @@ void beldex_transfer_utils::send_step1__prepare_params_for_get_decoys(
  		potential_total = sum_sending_amounts + attempt_at_min_fee;
 	}
 	//
-	// ── HF21: private token send ──────────────────────────────────────────
+	// ── HF21: privacy token send ──────────────────────────────────────────
 	// A token transfer spends two disjoint pools at once: token outputs of the
 	// requested token to cover the transferred amount, and native BDX outputs
 	// to cover the fee (fees are always BDX). They are selected and balanced
@@ -296,7 +296,7 @@ void beldex_transfer_utils::send_step1__prepare_params_for_get_decoys(
 	// ── HF21: token descriptor operation (deploy a new asset) ─────────────
 	// A deploy has no token inputs -- the token does not exist until this very
 	// transaction creates it. What it does have is a fixed fan-out of
-	// MIN_TOKEN_MINT_OUTPUTS zarcanum outputs carrying the initial supply, the
+	// MIN_TOKEN_MINT_OUTPUTS zyphora outputs carrying the initial supply, the
 	// descriptor operation in tx.extra, and a protocol-mandated BDX burn on top
 	// of the ordinary network fee. All of that is paid for out of native
 	// outputs, so selection is native-only -- just against a much bigger bill.
@@ -339,7 +339,7 @@ void beldex_transfer_utils::send_step1__prepare_params_for_get_decoys(
 		};
 		vector<SpendableOutput> native_pool;
 		for (const auto &out : unspent_outs) {
-			if (out.is_zarcanum()) {
+			if (out.is_zyphora()) {
 				continue; // a token cannot pay a BDX fee or a BDX burn
 			}
 			if (out.amount < beldex_fork_rules::dust_threshold()
@@ -359,13 +359,16 @@ void beldex_transfer_utils::send_step1__prepare_params_for_get_decoys(
 		// still has to be covered by the inputs we select here, or construction
 		// fails at the last step for want of funds.
 		const uint64_t collateral_amount = token_op->collateral_amount();
-		uint64_t needed_total = estimate_with(1) + burn_amount + collateral_amount;
+		// The governance half of the registration fee rides in the miner fee,
+		// alongside the network fee and on top of the burn.
+		const uint64_t governance_fee = token_op->governance_fee();
+		uint64_t needed_total = estimate_with(1) + burn_amount + governance_fee + collateral_amount;
 		while (native_using < needed_total && native_pool.size() > 0) {
 			auto out = pop_random_value(native_pool);
 			native_using += out.amount;
 			retVals.using_outs.push_back(std::move(out));
 			++n_native_used;
-			needed_total = estimate_with(n_native_used) + burn_amount + collateral_amount; // each input grows the tx
+			needed_total = estimate_with(n_native_used) + burn_amount + governance_fee + collateral_amount; // each input grows the tx
 		}
 		retVals.spendable_balance = native_using;
 		retVals.required_balance = needed_total;
@@ -377,7 +380,7 @@ void beldex_transfer_utils::send_step1__prepare_params_for_get_decoys(
 		// to this wallet as a locked output. Report it as the amount being sent
 		// so the caller's balance reconciliation (fee + change + sent == found)
 		// adds up, and so the UI shows a 0.33 BDX fee rather than a 10,000 one.
-		retVals.using_fee = needed_total - collateral_amount; // network fee + protocol burn
+		retVals.using_fee = needed_total - collateral_amount; // network fee + burn + governance fee
 		retVals.final_total_wo_fee = collateral_amount;       // locked collateral, returned to sender
 		retVals.change_amount = native_using - needed_total;
 		uint64_t initial_supply = 0;
@@ -397,7 +400,7 @@ void beldex_transfer_utils::send_step1__prepare_params_for_get_decoys(
 		}
 		vector<SpendableOutput> token_pool, native_pool;
 		for (const auto &out : unspent_outs) {
-			if (out.is_zarcanum()) {
+			if (out.is_zyphora()) {
 				if (out.token_id != none && *out.token_id == *requested_token_id
 				    && out.amount != 0) {
 					// Zero-amount token outputs are skipped. A registration fans
@@ -406,7 +409,7 @@ void beldex_transfer_utils::send_step1__prepare_params_for_get_decoys(
 					// the anonymity set, not to be spent. Selecting them adds
 					// nothing to the amount while adding an input that has to be
 					// signed and verified, and the network rejects the result
-					// ("ZC_sig verification failed"). Dropping them also keeps
+					// ("ZY_sig verification failed"). Dropping them also keeps
 					// the transaction smaller and the fee lower.
 					token_pool.push_back(out);
 				}
@@ -625,7 +628,15 @@ void beldex_transfer_utils::pre_step2_tie_unspent_outs_to_mix_outs_for_all_futur
 					continue;
 				}
 
-				RandomAmountOutputs output_mix_outs = pop_index(mix_outs_from_server, j);
+				// Taken out in place, not with pop_index: pop_index refills slot j
+				// with the last ring, so the next input gets whichever ring the
+				// server listed last. Since HF22 the rings are not interchangeable
+				// -- the server draws each from its input's bucket (token or
+				// native), in request order -- and with two token inputs and a
+				// native fee input that reshuffle handed the second token input
+				// the native ring, which the node rejects.
+				RandomAmountOutputs output_mix_outs = std::move(mix_outs_from_server[j]);
+				mix_outs_from_server.erase(mix_outs_from_server.begin() + j);
 
 				// if we need to retry constructing tx, will remember to use same mix outs for this out on subsequent attempt(s)
 				prior_attempt_unspent_outs_to_mix_outs_new[out.public_key] = output_mix_outs.outputs;
@@ -763,7 +774,7 @@ void beldex_transfer_utils::create_transaction(
 	retVals.errCode = noError;
 	// Historically this function hard-coded hf_version = 18, which meant every
 	// gate at or above 18 in construct_tx was permanently off -- including the
-	// HF21 private-token branch. 0 reproduces that behaviour for callers that
+	// HF21 privacy-token branch. 0 reproduces that behaviour for callers that
 	// have not been updated to pass the real fork version through.
 	const uint8_t effective_hf_version = hf_version != 0 ? hf_version : 18;
 	const bool tokens_active = effective_hf_version >= HF_VERSION_PRIVATE_TOKENS;
@@ -840,7 +851,7 @@ void beldex_transfer_utils::create_transaction(
 	for (size_t out_index = 0; out_index < outputs.size(); out_index++) {
 		// Token inputs are denominated in their own token and pay no part of
 		// the BDX fee, so they stay out of the native balance reconciliation.
-		if (!outputs[out_index].is_zarcanum()) {
+		if (!outputs[out_index].is_zyphora()) {
 			found_money += outputs[out_index].amount;
 		}
 		if (found_money > UINT64_MAX) {
@@ -967,8 +978,8 @@ void beldex_transfer_utils::create_transaction(
 			rct::identity(src.mask); // in the original cn_utils impl this was left as null for generate_key_image_helper_rct to fill in with identity I
 		}
 		//
-		// ── HF21: private token (zarcanum) input ───────────────────────────
-		if (outputs[out_index].is_zarcanum()) {
+		// ── HF21: privacy token (zyphora) input ───────────────────────────
+		if (outputs[out_index].is_zyphora()) {
 			if (!tokens_active) {
 				retVals.errCode = notYetImplemented; // token input offered before HF21
 				return;
@@ -977,7 +988,7 @@ void beldex_transfer_utils::create_transaction(
 			// Pedersen mask and -- crucially -- the token-blinding scalar r can
 			// be recovered locally. r has no other source and is required to
 			// reconstruct T_real when building the pseudo-output.
-			cryptonote::tx_out_zarcanum zout{};
+			cryptonote::tx_out_zyphora zout{};
 			zout.stealth_address = public_key; // parsed above from outputs[].public_key
 			if (!string_tools::hex_to_pod(*outputs[out_index].amount_commitment, zout.amount_commitment)
 				|| !string_tools::hex_to_pod(*outputs[out_index].blinded_token_id, zout.blinded_token_id)) {
@@ -991,12 +1002,12 @@ void beldex_transfer_utils::create_transaction(
 				retVals.errCode = cantGetDecryptedMaskFromRCTHex;
 				return;
 			}
-			uint64_t zc_amount = 0;
+			uint64_t zy_amount = 0;
 			crypto::token_id zc_token_id{};
 			rct::key zc_amount_mask{}, zc_token_mask{};
-			if (!cryptonote::decode_zarcanum_output(
+			if (!cryptonote::decode_zyphora_output(
 					sender_account_keys, zout, derivation, internal_output_index,
-					zc_amount, zc_token_id, zc_amount_mask, zc_token_mask)) {
+					zy_amount, zc_token_id, zc_amount_mask, zc_token_mask)) {
 				// The commitment did not reopen: the output is not ours, or the
 				// server sent inconsistent fields.
 				retVals.errCode = invalidCommitOrMaskOnOutputRCT;
@@ -1011,7 +1022,7 @@ void beldex_transfer_utils::create_transaction(
 					return;
 				}
 			}
-			if (zc_amount != outputs[out_index].amount) {
+			if (zy_amount != outputs[out_index].amount) {
 				retVals.errCode = invalidCommitOrMaskOnOutputRCT;
 				return;
 			}
@@ -1064,7 +1075,7 @@ void beldex_transfer_utils::create_transaction(
  		to_dst.addr = to_addrs[i].address;
  		to_dst.amount = sending_amounts[i];
  		to_dst.is_subaddress = to_addrs[i].is_subaddress;
- 		// HF21: mark this destination as a private-token output. Leaving
+ 		// HF21: mark this destination as a privacy-token output. Leaving
  		// token_id null keeps it an ordinary BDX txout_to_key.
  		if (i < destination_token_ids.size() && destination_token_ids[i] != none
  			&& !destination_token_ids[i]->empty()) {
@@ -1082,7 +1093,7 @@ void beldex_transfer_utils::create_transaction(
  		}
  		splitted_dsts.push_back(to_dst);
  	}
- 	// HF21: token change goes back to the sender as a further zarcanum output.
+ 	// HF21: token change goes back to the sender as a further zyphora output.
  	// It is accounted separately from `change_amount`, which stays the BDX
  	// change -- a token tx spends native inputs for its fee as well.
  	if (token_change_amount != 0) {
@@ -1124,20 +1135,20 @@ void beldex_transfer_utils::create_transaction(
  			+ TOKEN_REGISTRATION_UNLOCK_MARGIN_BLOCKS;
  		splitted_dsts.push_back(collateral_dst);
  	}
- 	// HF21: a deploy/mint must emit at least MIN_TOKEN_MINT_OUTPUTS zarcanum
+ 	// HF21: a deploy/mint must emit at least MIN_TOKEN_MINT_OUTPUTS zyphora
  	// outputs. The chain enforces this so a brand-new token has a ring to hide
  	// in from its very first spend -- with a single output there would be
  	// nothing to hide among. The padding outputs are zero-amount self-sends:
  	// they cost fee and nothing else, and the wallet receives them as its own
  	// ring-member candidates. wallet2::create_token_deploy_tx does exactly this.
  	if (token_op != none) {
- 		size_t zc_count = 0;
+ 		size_t zy_count = 0;
  		for (const auto &d : splitted_dsts) {
- 			if (d.is_zarcanum()) {
- 				++zc_count;
+ 			if (d.is_zyphora()) {
+ 				++zy_count;
  			}
  		}
- 		for (size_t i = zc_count; i < (size_t)MIN_TOKEN_MINT_OUTPUTS; ++i) {
+ 		for (size_t i = zy_count; i < (size_t)MIN_TOKEN_MINT_OUTPUTS; ++i) {
  			tx_destination_entry pad_dst{};
  			pad_dst.addr = sender_account_keys.m_account_address;
  			pad_dst.amount = 0;

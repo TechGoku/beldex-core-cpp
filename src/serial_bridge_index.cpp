@@ -101,7 +101,14 @@ string serial_bridge::token_registration_info()
 	// this bridge -- 10000 BDX does not fit a JS number safely.
 	root.put("collateral_amount", RetVals_Transforms::str_from(tokens::REGISTRATION_COLLATERAL_AMOUNT));
 	root.put("collateral_lock_blocks", RetVals_Transforms::str_from(tokens::REGISTRATION_COLLATERAL_LOCK_BLOCKS));
-	// Minimum zarcanum outputs a registration must emit; the wallet does not
+	// The registration fee, on top of the collateral and the network fee: half
+	// burned, half to the governance wallet. Unlike the collateral it does not
+	// come back. A UI checking whether a wallet can afford to register needs
+	// collateral + fee + network fee, not collateral alone.
+	root.put("registration_fee_amount", RetVals_Transforms::str_from(tokens::REGISTRATION_FEE_AMOUNT));
+	root.put("registration_fee_burn_amount", RetVals_Transforms::str_from(tokens::REGISTRATION_FEE_BURN_AMOUNT));
+	root.put("registration_fee_governance_amount", RetVals_Transforms::str_from(tokens::REGISTRATION_FEE_GOVERNANCE_AMOUNT));
+	// Minimum zyphora outputs a registration must emit; the wallet does not
 	// choose this, but it explains why the fee is larger than a normal send.
 	root.put("min_token_outputs", RetVals_Transforms::str_from((uint64_t)MIN_TOKEN_MINT_OUTPUTS));
 	// The fork the network must be on before a registration can be built at all.
@@ -286,7 +293,7 @@ string serial_bridge::generate_key_image(const string txPublicKey, const string 
 	return ret_json_from_root(root);
 }
 //
-// HF21: pull the private-token fields off an unspent-out description. All are
+// HF21: pull the privacy-token fields off an unspent-out description. All are
 // optional; a description without them is an ordinary BDX output, so old
 // servers and old callers keep working untouched.
 static void _parse_token_fields_onto(boost::property_tree::ptree &desc, SpendableOutput &out)
@@ -298,7 +305,7 @@ static void _parse_token_fields_onto(boost::property_tree::ptree &desc, Spendabl
 	if (enc != none && !enc->empty()) {
 		out.encrypted_amount = stoull(*enc);
 	}
-	// Normalise empty strings to "absent" so is_zarcanum() cannot be tripped by
+	// Normalise empty strings to "absent" so is_zyphora() cannot be tripped by
 	// a server that emits "" rather than omitting the key.
 	if (out.token_id != none && out.token_id->empty()) out.token_id = none;
 	if (out.blinded_token_id != none && out.blinded_token_id->empty()) out.blinded_token_id = none;
@@ -468,7 +475,7 @@ string serial_bridge::send_step1__prepare_params_for_get_decoys(const string &ar
 		root.put("using_fee", RetVals_Transforms::str_from(retVals.using_fee));
 		root.put("final_total_wo_fee", RetVals_Transforms::str_from(retVals.final_total_wo_fee));
 		root.put("change_amount", RetVals_Transforms::str_from(retVals.change_amount));
-		// HF21: the token side of a private-token send. Zero for a BDX send.
+		// HF21: the token side of a privacy-token send. Zero for a BDX send.
 		root.put("token_final_total_wo_fee", RetVals_Transforms::str_from(retVals.token_final_total_wo_fee));
 		root.put("token_change_amount", RetVals_Transforms::str_from(retVals.token_change_amount));
 		if (optl__token_op != none) {
@@ -539,7 +546,7 @@ string serial_bridge::pre_step2_tie_unspent_outs_to_mix_outs_for_all_future_tx_a
 			amountOutput.global_index = stoull(mix_out_output_desc.second.get<string>("global_index"));
 			amountOutput.public_key = mix_out_output_desc.second.get<string>("public_key");
 			amountOutput.rct = mix_out_output_desc.second.get_optional<string>("rct");
-			// HF21: present when the decoy is itself a tx_out_zarcanum.
+			// HF21: present when the decoy is itself a tx_out_zyphora.
 			amountOutput.blinded_token_id = mix_out_output_desc.second.get_optional<string>("blinded_token_id");
 			amountAndOuts.outputs.push_back(std::move(amountOutput));
 		}
@@ -663,7 +670,7 @@ string serial_bridge::send_step2__try_create_transaction(const string &args_stri
 		out.global_index = stoull(output_desc.second.get<string>("global_index"));
 		out.index = stoull(output_desc.second.get<string>("index"));
 		out.tx_pub_key = output_desc.second.get<string>("tx_pub_key");
-		// HF21: without these a zarcanum output handed back from step1 would be
+		// HF21: without these a zyphora output handed back from step1 would be
 		// rebuilt here as an ordinary BDX output, and the token input branch in
 		// create_transaction would never run.
 		_parse_token_fields_onto(output_desc.second, out);
@@ -739,7 +746,7 @@ string serial_bridge::send_step2__try_create_transaction(const string &args_stri
 		beldex_fork_rules::make_use_fork_rules_fn(fork_version),
 		stoull(json_root.get<string>("unlock_time")),
 		nettype_from_string(json_root.get<string>("nettype_string")),
-		// HF21: "token_id" marks the single destination as a private-token
+		// HF21: "token_id" marks the single destination as a privacy-token
 		// output; absent means an ordinary BDX transfer, exactly as before.
 		optl__token_id != none
 			? vector<boost::optional<string>>{optl__token_id}

@@ -282,7 +282,7 @@ LightwalletAPI_Res_GetUnspentOuts beldex_send_routine::new__parsed_res__get_unsp
 			out.global_index = stoull(output_desc.second.get<string>("global_index"));
 			out.index = output__index;
 			out.tx_pub_key = *optl__tx_pub_key; // just b/c we've already accessed it above
-			// HF21 private token fields. All optional: an output without them is
+			// HF21 privacy token fields. All optional: an output without them is
 			// an ordinary BDX output, so a server that predates tokens is
 			// unaffected. token_id is the LWS's decode (it holds the view key and
 			// already decodes `amount` the same way) and is used only to select
@@ -347,7 +347,7 @@ LightwalletAPI_Res_GetRandomOuts beldex_send_routine::new__parsed_res__get_rando
 			}
 			amountOutput.public_key = mix_out_output_desc.second.get<string>("public_key");
 			amountOutput.rct = mix_out_output_desc.second.get_optional<string>("rct");
-			// HF21: present when the decoy is itself a tx_out_zarcanum; needed
+			// HF21: present when the decoy is itself a tx_out_zyphora; needed
 			// for the X layer of the CLSAG-GGX ring.
 			amountOutput.blinded_token_id = mix_out_output_desc.second.get_optional<string>("blinded_token_id");
 			//

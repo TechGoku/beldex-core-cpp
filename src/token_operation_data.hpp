@@ -4,7 +4,7 @@
 #include "token_descriptor_operation_utils.h"
 #include "beldex_economy.h"
 
-// HF21 private tokens: a token descriptor operation the caller is asking to
+// HF21 privacy tokens: a token descriptor operation the caller is asking to
 // perform -- currently token registration ("deploy a new asset").
 //
 // This mirrors master_node_data (register_mn_data.hpp), which does the same job
@@ -54,7 +54,7 @@ struct token_operation_data
         using namespace cryptonote;
         switch (tdo.operation_type)
         {
-            case token_descriptor_operation_type::register_token: return txtype::register_private_token;
+            case token_descriptor_operation_type::register_token: return txtype::register_privacy_token;
             case token_descriptor_operation_type::mint_token:     return txtype::mint_token;
             case token_descriptor_operation_type::update_token:   return txtype::update_token;
             case token_descriptor_operation_type::burn_token:     return txtype::burn_token;
@@ -62,20 +62,31 @@ struct token_operation_data
         }
     }
 
-    // BDX burned on top of the ordinary network fee. Mint and update still
-    // burn; registration does not -- it locks collateral instead, see below.
-    // Computed here rather than passed in from JavaScript so a caller cannot
-    // under-declare it and produce a tx the network will reject.
+    // BDX burned on top of the ordinary network fee: half the registration fee
+    // for a registration, a flat amount for mint and update. Computed here
+    // rather than passed in from JavaScript so a caller cannot under-declare it
+    // and produce a tx the network will reject.
     uint64_t burn_amount(uint8_t hf_version) const
     {
         return tokens::burn_needed(hf_version, tdo.operation_type);
     }
 
-    // Registration pays no burn. It must instead create a native output back to
-    // the registering wallet for REGISTRATION_COLLATERAL_AMOUNT, locked for
-    // REGISTRATION_COLLATERAL_LOCK_BLOCKS; consensus rejects a registration
-    // without one. The stake returns to the owner when the lock expires, so
-    // unlike a burn it has to be *selected for* but is not spent away.
+    // The other half of the registration fee, paid to the governance wallet.
+    // It travels as miner fee: consensus requires (fee - burn) to be at least
+    // this much on a registration and redirects it from the block reward. So it
+    // is added to the fee on top of the size-based network fee, never in place
+    // of it -- the same way upstream's wallet2 adds governance_fee_fixed.
+    uint64_t governance_fee() const
+    {
+        return is_registration() ? tokens::REGISTRATION_FEE_GOVERNANCE_AMOUNT : 0;
+    }
+
+    // Registration also creates a native output back to the registering wallet
+    // for REGISTRATION_COLLATERAL_AMOUNT, locked for
+    // REGISTRATION_COLLATERAL_LOCK_BLOCKS, and declares it in a
+    // tx_extra_collateral_lock (written by construct_tx); consensus rejects a
+    // registration without both. The stake returns to the owner when the lock
+    // expires, so unlike the fee it has to be *selected for* but is not spent.
     uint64_t collateral_amount() const
     {
         return is_registration() ? tokens::REGISTRATION_COLLATERAL_AMOUNT : 0;
