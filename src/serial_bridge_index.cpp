@@ -94,20 +94,26 @@ string serial_bridge::new_payment_id()
 	return beldex_paymentID_utils::new_short_plain_paymentID_string();
 }
 
-string serial_bridge::token_registration_info()
+string serial_bridge::token_registration_info(const string &nettype)
 {
+	// The registration fee differs between networks (testnet charges less),
+	// so this answers for the network the caller is on, at the token fork.
+	const tokens::operation_fee fee = tokens::fee_for_operation(
+		HF_VERSION_PRIVATE_TOKENS,
+		cryptonote::token_descriptor_operation_type::register_token,
+		static_cast<uint8_t>(nettype_from_string(nettype)));
 	boost::property_tree::ptree root;
 	// Amounts are atomic units, as strings, like every other amount crossing
 	// this bridge -- 10000 BDX does not fit a JS number safely.
 	root.put("collateral_amount", RetVals_Transforms::str_from(tokens::REGISTRATION_COLLATERAL_AMOUNT));
 	root.put("collateral_lock_blocks", RetVals_Transforms::str_from(tokens::REGISTRATION_COLLATERAL_LOCK_BLOCKS));
-	// The registration fee, on top of the collateral and the network fee: half
-	// burned, half to the governance wallet. Unlike the collateral it does not
+	// The registration fee, on top of the collateral and the network fee: part
+	// burned, part to the governance wallet. Unlike the collateral it does not
 	// come back. A UI checking whether a wallet can afford to register needs
 	// collateral + fee + network fee, not collateral alone.
-	root.put("registration_fee_amount", RetVals_Transforms::str_from(tokens::REGISTRATION_FEE_AMOUNT));
-	root.put("registration_fee_burn_amount", RetVals_Transforms::str_from(tokens::REGISTRATION_FEE_BURN_AMOUNT));
-	root.put("registration_fee_governance_amount", RetVals_Transforms::str_from(tokens::REGISTRATION_FEE_GOVERNANCE_AMOUNT));
+	root.put("registration_fee_amount", RetVals_Transforms::str_from(fee.burn_amount + fee.governance_amount));
+	root.put("registration_fee_burn_amount", RetVals_Transforms::str_from(fee.burn_amount));
+	root.put("registration_fee_governance_amount", RetVals_Transforms::str_from(fee.governance_amount));
 	// Minimum zyphora outputs a registration must emit; the wallet does not
 	// choose this, but it explains why the fee is larger than a normal send.
 	root.put("min_token_outputs", RetVals_Transforms::str_from((uint64_t)MIN_TOKEN_MINT_OUTPUTS));
@@ -342,6 +348,12 @@ static bool _parse_token_operation(
 	}
 	auto &op_json = *optl__op;
 	token_operation_data data{};
+	// The fee depends on the network. A request without nettype_string leaves
+	// it UNDEFINED, which step1 refuses rather than guessing a fee.
+	boost::optional<string> optl__nettype = json_root.get_optional<string>("nettype_string");
+	if (optl__nettype != none) {
+		data.nettype = nettype_from_string(*optl__nettype);
+	}
 	auto &tdo = data.tdo;
 	tdo.operation_type = cryptonote::token_descriptor_operation_type::register_token;
 	tdo.fields = (uint8_t)(cryptonote::token_field_descriptor | cryptonote::token_field_token_id_salt);

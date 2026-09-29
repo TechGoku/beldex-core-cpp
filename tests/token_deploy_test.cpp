@@ -120,6 +120,7 @@ static token_operation_data make_deploy_op(const cryptonote::account_keys &keys,
                                            uint32_t salt)
 {
     token_operation_data op{};
+    op.nettype = cryptonote::network_type::MAINNET;
     op.tdo.operation_type = cryptonote::token_descriptor_operation_type::register_token;
     op.tdo.fields = (uint8_t)(cryptonote::token_field_descriptor | cryptonote::token_field_token_id_salt);
     op.tdo.token_id_salt = salt;
@@ -158,7 +159,8 @@ int main()
     const uint64_t current_supply = 1000ull * 100000000ull;
     const uint64_t max_supply = 1000000ull * 100000000ull;
     token_operation_data deploy_op = make_deploy_op(keys, current_supply, max_supply, decimals, 42);
-    const uint64_t expected_burn = tokens::burn_needed(HF, cryptonote::token_descriptor_operation_type::register_token);
+    const uint64_t expected_burn = tokens::fee_for_operation(
+        HF, cryptonote::token_descriptor_operation_type::register_token, cryptonote::network_type::MAINNET).burn_amount;
 
     cout << "=== token id derivation ===\n";
     check(deploy_op.token_id != crypto::null_tid, "token id is non-null");
@@ -170,6 +172,22 @@ int main()
         check(same.token_id == deploy_op.token_id, "the same descriptor + salt is deterministic");
     }
     cout << "  burn required: " << expected_burn << " (" << (expected_burn / COIN) << " BDX)\n";
+
+    cout << "=== registration fee per network ===\n";
+    {
+        using op_type = cryptonote::token_descriptor_operation_type;
+        const auto main_fee = tokens::fee_for_operation(HF, op_type::register_token, cryptonote::network_type::MAINNET);
+        const auto test_fee = tokens::fee_for_operation(HF, op_type::register_token, cryptonote::network_type::TESTNET);
+        check_eq(main_fee.burn_amount, 500 * COIN, "mainnet registration burns 500 BDX");
+        check_eq(main_fee.governance_amount, 500 * COIN, "mainnet registration leaves 500 BDX for governance");
+        check_eq(test_fee.burn_amount, 50 * COIN, "testnet registration burns 50 BDX");
+        check_eq(test_fee.governance_amount, 50 * COIN, "testnet registration leaves 50 BDX for governance");
+        check(!tokens::fee_for_operation(HF - 1, op_type::register_token, cryptonote::network_type::MAINNET).enabled,
+              "no token fee policy before the token fork");
+        token_operation_data unset = deploy_op;
+        unset.nettype = cryptonote::network_type::UNDEFINED;
+        check(!unset.fee(HF).enabled, "an operation with no network gets no fee policy");
+    }
 
     // ── step1: selection has to cover fee + burn out of native outputs ───────
     cout << "=== step1: selection ===\n";

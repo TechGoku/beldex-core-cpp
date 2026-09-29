@@ -237,6 +237,13 @@ void beldex_transfer_utils::send_step1__prepare_params_for_get_decoys(
 		retVals.errCode = notYetImplemented;
 		return;
 	}
+	// A token operation's fee depends on the network -- testnet and mainnet
+	// charge different amounts -- so without a known network there is no fee
+	// consensus would accept. Refuse rather than guess one.
+	if (deploying_token && !token_op->fee(hf_version).enabled) {
+		retVals.errCode = invalidTokenOperation;
+		return;
+	}
 	//
 	if (!is_sweeping && !deploying_token) {
 		for (uint64_t sending_amount : sending_amounts) {
@@ -359,9 +366,9 @@ void beldex_transfer_utils::send_step1__prepare_params_for_get_decoys(
 		// still has to be covered by the inputs we select here, or construction
 		// fails at the last step for want of funds.
 		const uint64_t collateral_amount = token_op->collateral_amount();
-		// The governance half of the registration fee rides in the miner fee,
+		// The governance part of the registration fee rides in the miner fee,
 		// alongside the network fee and on top of the burn.
-		const uint64_t governance_fee = token_op->governance_fee();
+		const uint64_t governance_fee = token_op->governance_fee(hf_version);
 		uint64_t needed_total = estimate_with(1) + burn_amount + governance_fee + collateral_amount;
 		while (native_using < needed_total && native_pool.size() > 0) {
 			auto out = pop_random_value(native_pool);

@@ -60,7 +60,7 @@ namespace serial_bridge
 	//! needs this *before* it lets someone start -- to show the collateral and
 	//! lock period, and to check the balance itself -- rather than discovering it
 	//! from a failed send. Takes no arguments; these are protocol constants.
-	string token_registration_info();
+	string token_registration_info(const string &nettype);
 	//
 	string newly_created_wallet(const string localeLanguageCode, const string nettype);
 	bool are_equal_mnemonics(const string mnemonicA, const string mnemonicB);

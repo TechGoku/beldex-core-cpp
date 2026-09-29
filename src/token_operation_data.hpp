@@ -47,6 +47,12 @@ struct token_operation_data
     // than trusting whatever the caller passed down.
     crypto::token_id token_id = crypto::null_tid;
 
+    // The network the transaction is for. Consensus charges token operations
+    // a different fee on testnet than on mainnet, so the fee cannot be worked
+    // out without it; UNDEFINED yields a disabled fee policy, which the send
+    // path refuses rather than guessing a network.
+    cryptonote::network_type nettype = cryptonote::UNDEFINED;
+
     // The tx type this operation is carried by. Consensus reads the operation
     // type out of tx.extra, so these two must agree or the tx is rejected.
     cryptonote::txtype tx_type() const
@@ -62,23 +68,31 @@ struct token_operation_data
         }
     }
 
-    // BDX burned on top of the ordinary network fee: half the registration fee
-    // for a registration, a flat amount for mint and update. Computed here
-    // rather than passed in from JavaScript so a caller cannot under-declare it
-    // and produce a tx the network will reject.
-    uint64_t burn_amount(uint8_t hf_version) const
+    // What consensus requires this operation to burn and to leave for
+    // governance, for this network at this fork. Computed here rather than
+    // passed in from JavaScript so a caller cannot under-declare it and
+    // produce a tx the network will reject.
+    tokens::operation_fee fee(uint8_t hf_version) const
     {
-        return tokens::burn_needed(hf_version, tdo.operation_type);
+        if (nettype == cryptonote::UNDEFINED)
+            return {};
+        return tokens::fee_for_operation(hf_version, tdo.operation_type, static_cast<uint8_t>(nettype));
     }
 
-    // The other half of the registration fee, paid to the governance wallet.
-    // It travels as miner fee: consensus requires (fee - burn) to be at least
-    // this much on a registration and redirects it from the block reward. So it
-    // is added to the fee on top of the size-based network fee, never in place
-    // of it -- the same way upstream's wallet2 adds governance_fee_fixed.
-    uint64_t governance_fee() const
+    // BDX burned on top of the ordinary network fee.
+    uint64_t burn_amount(uint8_t hf_version) const
     {
-        return is_registration() ? tokens::REGISTRATION_FEE_GOVERNANCE_AMOUNT : 0;
+        return fee(hf_version).burn_amount;
+    }
+
+    // The part of the fee paid to the governance wallet (registration only).
+    // It travels as miner fee: consensus requires (fee - burn) to be at least
+    // this much and redirects it from the block reward. So it is added to the
+    // fee on top of the size-based network fee, never in place of it -- the
+    // same way upstream's wallet2 adds governance_fee_fixed.
+    uint64_t governance_fee(uint8_t hf_version) const
+    {
+        return fee(hf_version).governance_amount;
     }
 
     // Registration also creates a native output back to the registering wallet
