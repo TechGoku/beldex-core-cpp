@@ -96,16 +96,18 @@ string serial_bridge::new_payment_id()
 
 string serial_bridge::token_registration_info(const string &nettype)
 {
-	// The registration fee differs between networks (testnet charges less),
-	// so this answers for the network the caller is on, at the token fork.
+	// The registration fee and the collateral differ between networks (testnet
+	// charges less), so this answers for the network the caller is on, at the
+	// token fork.
+	const uint8_t net = static_cast<uint8_t>(nettype_from_string(nettype));
 	const tokens::operation_fee fee = tokens::fee_for_operation(
 		HF_VERSION_PRIVATE_TOKENS,
 		cryptonote::token_descriptor_operation_type::register_token,
-		static_cast<uint8_t>(nettype_from_string(nettype)));
+		net);
 	boost::property_tree::ptree root;
 	// Amounts are atomic units, as strings, like every other amount crossing
 	// this bridge -- 10000 BDX does not fit a JS number safely.
-	root.put("collateral_amount", RetVals_Transforms::str_from(tokens::REGISTRATION_COLLATERAL_AMOUNT));
+	root.put("collateral_amount", RetVals_Transforms::str_from(tokens::registration_collateral_amount(net)));
 	root.put("collateral_lock_blocks", RetVals_Transforms::str_from(tokens::REGISTRATION_COLLATERAL_LOCK_BLOCKS));
 	// The registration fee, on top of the collateral and the network fee: part
 	// burned, part to the governance wallet. Unlike the collateral it does not

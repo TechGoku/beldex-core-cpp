@@ -96,14 +96,15 @@ struct token_operation_data
     }
 
     // Registration also creates a native output back to the registering wallet
-    // for REGISTRATION_COLLATERAL_AMOUNT, locked for
+    // for registration_collateral_amount(nettype), locked for
     // REGISTRATION_COLLATERAL_LOCK_BLOCKS, and declares it in a
     // tx_extra_collateral_lock (written by construct_tx); consensus rejects a
     // registration without both. The stake returns to the owner when the lock
     // expires, so unlike the fee it has to be *selected for* but is not spent.
     uint64_t collateral_amount() const
     {
-        return is_registration() ? tokens::REGISTRATION_COLLATERAL_AMOUNT : 0;
+        return is_registration()
+            ? tokens::registration_collateral_amount(static_cast<uint8_t>(nettype)) : 0;
     }
 
     bool is_registration() const

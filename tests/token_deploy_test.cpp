@@ -189,6 +189,19 @@ int main()
         check(!unset.fee(HF).enabled, "an operation with no network gets no fee policy");
     }
 
+    cout << "=== registration collateral per network ===\n";
+    {
+        check_eq(tokens::registration_collateral_amount(cryptonote::network_type::MAINNET), 10000 * COIN,
+                 "mainnet registration locks 10,000 BDX");
+        check_eq(tokens::registration_collateral_amount(cryptonote::network_type::TESTNET), 100 * COIN,
+                 "testnet registration locks 100 BDX");
+        check_eq(tokens::registration_collateral_amount(cryptonote::network_type::DEVNET), 10000 * COIN,
+                 "devnet keeps the mainnet collateral");
+        token_operation_data testnet_op = deploy_op;
+        testnet_op.nettype = cryptonote::network_type::TESTNET;
+        check_eq(testnet_op.collateral_amount(), 100 * COIN, "a testnet registration builds a 100 BDX collateral");
+    }
+
     // ── step1: selection has to cover fee + burn out of native outputs ───────
     cout << "=== step1: selection ===\n";
     vector<SpendableOutput> unspent;

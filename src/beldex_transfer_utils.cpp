@@ -361,7 +361,7 @@ void beldex_transfer_utils::send_step1__prepare_params_for_get_decoys(
 		// fails to construct at the very last step.
 		uint64_t native_using = 0;
 		size_t n_native_used = 0;
-		// HF22: a registration locks REGISTRATION_COLLATERAL_AMOUNT in a native
+		// HF22: a registration locks the network's collateral in a native
 		// output back to the sender. It is not spent away like the burn, but it
 		// still has to be covered by the inputs we select here, or construction
 		// fails at the last step for want of funds.
@@ -1115,7 +1115,7 @@ void beldex_transfer_utils::create_transaction(
  		splitted_dsts.push_back(token_change_dst);
  	}
  	// HF22: a token registration must carry a native output back to the sender
- 	// for REGISTRATION_COLLATERAL_AMOUNT, locked for
+ 	// for the network's registration collateral, locked for
  	// REGISTRATION_COLLATERAL_LOCK_BLOCKS. Consensus checks for exactly this and
  	// rejects a registration without it. The lock is an ABSOLUTE height, so it
  	// needs the chain tip; without one we cannot build a valid registration and
@@ -1201,6 +1201,7 @@ void beldex_transfer_utils::create_transaction(
 	crypto::secret_key tx_key;
 	std::vector<crypto::secret_key> additional_tx_keys;
 	beldex_construct_tx_params tx_params;
+	tx_params.nettype = nettype;
 	tx_params.hf_version = effective_hf_version;
 	if (token_op != none) {
 		// HF21: consensus reads the operation type back out of tx.extra and
